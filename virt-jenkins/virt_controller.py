@@ -681,6 +681,25 @@ def runCMDNonBlocked(cmd, timeout=5):
 
     return (return_code, result_buf, start_time, end_time)
 
+def _parseOutput(output,
+                 start_key="**** Test in progress ****",
+                 end_key="**** Test run complete ****"):
+    output_list = []
+    start_key_index = 0
+    end_key_index = 0
+    output_list = output.split(os.linesep)
+    for index, item in enumerate(output_list):
+        if re.search(start_key, item, re.I):
+            start_key_index = index
+        elif re.search(end_key, item, re.I):
+            end_key_index = index
+    if not end_key_index:
+        end_key_index = index
+    if end_key_index == start_key_index:
+        return output
+    else:
+        return "\n".join(output_list[start_key_index, end_key_index+1])
+
 
 def _installHost(host_ip, ins_type="http", suse_os="sles-11",
                  suse_sp="sp4", bit="64"):
@@ -755,68 +774,6 @@ def _upgrateHost(host_ip):
 def runVirtCMD(task, log, queue=None, timeout=5):
     """Run command line with non-blocking format
     """
-    """
-    def _installHost(host_ip, ins_type="http",
-                     suse_os="sles-11", suse_sp="sp4", bit="64"):
-
-        source_name = "source.%s.%s-%s-%s" %(ins_type, suse_os, suse_sp, bit)
-        prefix_cmd_get_source = "/usr/share/qa/virtautolib/lib/get-source.sh"
-
-        if not os.path.exists(prefix_cmd_get_source):
-            LOGGER.error(("Failed to get repository due to %s does not exist"
-                          %prefix_cmd_get_source))
-
-            return (1, "Cause: " + prefix_cmd_get_source + " does exist !!",
-                    datetime.datetime.now(), datetime.datetime.now())
-
-        prefix_cmd_get_source = prefix_cmd_get_source + " -p %s"
-        cmd_get_source = prefix_cmd_get_source %(source_name)
-        LOGGER.info("Get reporsitory with cmd[%s]" %(cmd_get_source))
-        return_code, result_buf = runCMDBlocked(cmd_get_source)
-
-        if return_code != 0:
-            LOGGER.error("Failed to install host due to :%s" %result_buf)
-            return (return_code,
-                    "Cause: " + result_buf + "Disable installing program",
-                    datetime.datetime.now(), datetime.datetime.now())
-
-        install_repo = result_buf.strip()
-        LOGGER.debug("Repo for installing source [%s]"  %(install_repo))
-        addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/SLE-11-SP4/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/Tests/SLE_11_SP4/"
-        rpms = "qa_test_virtualization"
-        pattern = "kvm_server"
-        cmd = ("/usr/share/hamsta/feed_hamsta.pl -t 5 --re_url  %(install_repo)s "
-               "--re_sdk %(addon_repo)s --pattern %(pattern)s -rpms %(rpms)s -h "
-               "%(host_ip)s 127.0.0.1 -w" %dict(install_repo=install_repo,
-                                                addon_repo=addon_repo,
-                                                rpms=rpms,
-                                                pattern=pattern,
-                                                host_ip=host_ip,))
-        if DEBUG:
-            cmd = "./test"
-        LOGGER.info(("Start to install host with cmd[%s] on machine %s"
-                     %(cmd, host_ip)))
-        return runCMDNonBlocked(cmd, timeout=3600)
-
-    def _installGuest(host_ip):
-        cmd1 = "scp /root/virt/virt-simple.tcf root@%s:/usr/share/qa/tcf/" %host_ip
-        cmd2 = "scp /root/virt/virt-simple-run root@%s:/usr/share/qa/tools/" %host_ip
-        cmd3 = "scp /root/virt/source.cn root@%s:/usr/share/qa/virtautolib/data/" %host_ip
-        cmd4 = "ssh root@%s \"mkdir /.virtinst\"" %host_ip
-        runCMDBlocked(cmd1)
-        runCMDBlocked(cmd2)
-        runCMDBlocked(cmd3)
-        runCMDBlocked(cmd4)
-
-        cmd = ("/usr/share/hamsta/feed_hamsta.pl -x "
-               "\"/usr/share/qa/tools/virt-simple-run\" "
-               "-h %s 127.0.0.1 -w" %(host_ip))
-        if DEBUG:
-            cmd = "./test %s" %task
-        LOGGER.info(("Start to install guest with cmd[%s] on host %s"
-                     %(cmd, host_ip)))
-        return runCMDNonBlocked(cmd, timeout=7200)
-    """
     LOGGER.info("Task [%s] starts to run now" %task)
     host_ip = queue.get(block=True, timeout=2)
 
@@ -836,11 +793,16 @@ def runVirtCMD(task, log, queue=None, timeout=5):
     return_code, ih_result_buf, start_time, end_time = _installHost(host_ip)
     result_buf = "Parse 1:\n\tStatus :%s\n\tResult :%s\n\n" %(return_code,
                                                               ih_result_buf)
-    LOGGER.debug("Return output: [%s]" %result_buf)
+    LOGGER.debug("Parse 1 ,Return output: [%s]" %result_buf)
+
     if return_code == 0:
         return_code, ig_result_buf, _ig_start_time, end_time = _installGuest(host_ip)
+        #Get guest installing info from test result
+        ig_result_buf = _parseOutput(ig_result_buf)
+
         result_buf = result_buf + ("Parse 2:\n\tStatus :%s\n\tResult :%s\n"
                                    %(return_code, ig_result_buf))
+
         if return_code != 0:
             LOGGER.warn("Failed to install guest on host %s" %host_ip)
     else:
@@ -850,7 +812,7 @@ def runVirtCMD(task, log, queue=None, timeout=5):
     AllStaticFuncs.writeLog2File(task, log, return_code, host_ip,
                                  result_buf, end_time-start_time)
     LOGGER.info("Task [%s] finishes now" %task)
-    LOGGER.info("Sleep 2 seconds for next running" %task)
+    LOGGER.debug("Task %s sleeps 2 seconds for next running" %task)
     time.sleep(2)
     return (task, host_ip, return_code, result_buf, start_time, end_time, log)
 
@@ -963,6 +925,18 @@ class AllStaticFuncs(object):
         """Get html report url for displaying it in log
         """
         return os.path.join(AllStaticFuncs.getJobURL(), "HTML_Report/")
+
+    @staticmethod
+    def genEnv2File(var_value="", var_name="OUTPUT", file_name="env.file"):
+        jobs_path = os.getenv("WORKSPACE", "./")
+        env_file_path = os.path.join(jobs_path, file_name)
+        if os.path.exists(file_name):
+            os.remove(env_file_path)
+        with open(file_name, "w+") as ef_f:
+            ef_f.write("%s=%s" %(var_name, var_value))
+
+        LOGGER.debug("Wait 2 seconds for finished flush of I/O")
+        time.sleep(2)
 
     @staticmethod
     def compressFile(file_name):
@@ -1081,7 +1055,7 @@ class LoggerHandling(object):
     """
     def __init__(self, log_file):
         logging.basicConfig(level=logging.DEBUG,
-                            format='%(asctime)s %(filename)s[line:%(lineno)d] [%(process)d] %(levelname)s %(message)s',
+                            format='%(asctime)s %(filename)s[line:%(lineno)d] [%(process)d] %(levelname)-6s | %(message)s',
                             datefmt='%a, %d %b %Y %H:%M:%S',
                             filename=log_file,
                             filemode='w')
@@ -1140,7 +1114,7 @@ def main():
         mpr = MultipleProcessRun(host_list, task_list)
 
         AllStaticFuncs.warp_generate_html_report(
-        tcmap=mpr.getResultMap(),
+            tcmap=mpr.getResultMap(),
             htmllogname = os.getenv("BUILD_TAG", "Test_Report") + ".html",
             desc=("Automation test tool is only for installing guest"
                   " on remote server.\n\tFunctions:\n"
@@ -1150,11 +1124,15 @@ def main():
                   "\t\t4. Verify the installing result."),
             start_time=start_time)
         AllStaticFuncs.compressFile(AllStaticFuncs.getBuildPath())
+        AllStaticFuncs.genEnv2File("here should add output info")
     else:
+        AllStaticFuncs.genEnv2File("here is no available host now")
         LOGGER.warn("There is no available host now")
+        sys.exit(5)
     LOGGER.info("End")
 
 DEBUG = False
+#DEBUG = True
 LOGGER = LoggerHandling(os.path.join(AllStaticFuncs.getBuildPath(), "sys.log"))
 
 if __name__ == "__main__":
