@@ -649,7 +649,6 @@ def runCMDNonBlocked(cmd, timeout=5):
     #print "current param1 :%s \npid is :%s" %(task, os.getpid())
 
     start_time = datetime.datetime.now()
-    #cmd="./test %s" %cmd
     result = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, preexec_fn=os.setpgrp)
 
@@ -684,20 +683,33 @@ def runCMDNonBlocked(cmd, timeout=5):
 def _parseOutput(output,
                  start_key="Test in progress",
                  end_key="Test run complete"):
+
     output_list = []
+    job_id = 0
     start_key_index = 0
     end_key_index = 0
-    output_list = output.split(os.linesep)
-    
+
+    se_job_id = re.search("internal id: (\d+)", output)
+    if se_job_id:
+        job_id = se_job_id.groups()[0]
+
+    if DEBUG:
+        job_id = "929"
+
+    cmd_get_subcase_result = "/usr/share/hamsta/feed_hamsta.pl 127.0.0.1 --query_log %s" %(job_id)
+    return_id, case_result = runCMDBlocked(cmd_get_subcase_result)
+    output_list = case_result.split(os.linesep)
+
     for index, item in enumerate(output_list):
-        if re.search(r'%s' %start_key, item, re.I):
+        if re.search(start_key, item, re.I):
             start_key_index = index
         elif re.search(end_key, item, re.I):
             end_key_index = index
+            break
     if not end_key_index:
         end_key_index = index
     if end_key_index == start_key_index:
-        return output
+        return case_result
     else:
         output_list = map(lambda x: re.sub("^.*STDOUT  job *", "", x), 
                              output_list[start_key_index:end_key_index+1])
@@ -794,18 +806,33 @@ def runVirtCMD(task, log, queue=None, timeout=5):
     #cmd = "/root/virt/cmdreinstall"
 
     return_code, ih_result_buf, start_time, end_time = _installHost(host_ip)
-    ih_result_buf = _parseOutput(ih_result_buf)
-    result_buf = "Parse 1:\n\tStatus :%s\n\tResult :%s\n\n" %(return_code,
-                                                              ih_result_buf)
-    LOGGER.debug("Parse 1 ,Return output: [%s]" %result_buf)
+    #ih_result_buf = _parseOutput(ih_result_buf)
+    result_buf1_all = AllStaticFuncs.genHtmlOutputFormat("Parse 1",
+                                                        return_code,
+                                                        ih_result_buf)
+    
+    
+    #"Parse 1:\n\tStatus :%s\n\tResult :%s\n\n" %(return_code,
+    #                                             ih_result_buf)
+    LOGGER.debug(result_buf1_all)
+
+    '''
+    return_code = 0
+    result_buf1_all = ""
+    start_time = datetime.datetime.now()
+    '''
     if return_code == 0:
         return_code, ig_result_buf, _ig_start_time, end_time = _installGuest(host_ip)
         #Get guest installing info from test result
-        ig_result_buf = _parseOutput(ig_result_buf)
 
-        result_buf = result_buf + ("Parse 2:\n\tStatus :%s\n\tResult :%s\n"
-                                   %(return_code, ig_result_buf))
-
+        ig_sub_result_buf = _parseOutput(ig_result_buf)
+        result_buf2_outline = AllStaticFuncs.genHtmlOutputFormat("Parse 2",
+                                                                 return_code,
+                                                                 ig_sub_result_buf)
+        result_buf2_all = AllStaticFuncs.genHtmlOutputFormat("Parse 2",
+                                                             return_code,
+                                                             ig_result_buf)
+        LOGGER.info("OUTPUT:" + ig_result_buf)
         if return_code != 0:
             LOGGER.warn("Failed to install guest on host %s" %host_ip)
     else:
@@ -813,11 +840,15 @@ def runVirtCMD(task, log, queue=None, timeout=5):
 
     queue.put(host_ip)
     AllStaticFuncs.writeLog2File(task, log, return_code, host_ip,
-                                 result_buf, end_time-start_time)
+                                 result_buf1_all + result_buf2_all,
+                                 end_time-start_time)
+
     LOGGER.info("Task [%s] finishes now" %task)
     LOGGER.debug("Task %s sleeps 2 seconds for next running" %task)
     time.sleep(2)
-    return (task, host_ip, return_code, result_buf, start_time, end_time, log)
+    return (task, host_ip, return_code, 
+            result_buf1_all + result_buf2_outline,
+            start_time, end_time, log)
 
 class ParseCMDParam(optparse.OptionParser):
     """Class which parses command parameters
@@ -888,7 +919,7 @@ class AllStaticFuncs(object):
             f.write("-" * 30 + os.linesep)
             f.write(os.linesep)
             f.write("Output : " + os.linesep +
-                    ("\t:%s" %(content.replace(os.linesep, os.linesep+"\t"))))
+                    ("\t%s" %(content.replace(os.linesep, os.linesep+"\t"))))
             f.flush()
             f.close()
 
@@ -934,8 +965,40 @@ class AllStaticFuncs(object):
         jobs_path = AllStaticFuncs.getBuildPath()
         env_file_path = os.path.join(jobs_path, file_name)
         with open(env_file_path, "w+") as ef_f:
-            ef_f.write("%s=%s" %(var_name, var_value))
+            ef_f.write("%s=\\\n%s" %(var_name, var_value))
 
+    @staticmethod
+    def inputResult2EnvFile(result=[]):
+        output = ""
+        failed_tc = 0
+        passed_tc = 0
+        timeout_tc = 0
+        total = 0
+        if result:
+            output = ""
+            for ele in result:
+                host_ip = ele[0]
+                result_info = ele[1]
+                output = output + ".\t" + host_ip + ":\\\n"
+                for ele_info in result_info:
+                    if ele_info["tc_status"] == "Passed":
+                        passed_tc += 1
+                    elif ele_info["tc_status"] == "Failed":
+                        failed_tc += 1
+                    else:
+                        timeout_tc += 1
+                    output = output + "-" + "\t"*2 + str(ele_info["tc_id"]) + ": " + str(ele_info["tc_status"]) + "\\\n"
+            output = output +"\\\n"
+            output = output + "\t" + "*" * 30 + "\\\n"    
+            output = output + ".\t" + "Statistic" + ":\\\n"
+            output = output + "-\t\t" + "Passed :" + str(passed_tc) + ":\\\n"
+            output = output + "-\t\t" + "Failed :" + str(failed_tc) + ":\\\n"
+            output = output + "-\t\t" + "Timeout:" + str(timeout_tc) + ":\\\n"
+            output = output + "-\t\t" + "Total  :" + str(passed_tc + failed_tc + timeout_tc) + ":\\\n"
+        else:
+            output = output + "OUTPUT is empty"
+        AllStaticFuncs.genEnv2File(output)
+  
     @staticmethod
     def compressFile(file_name):
         """Compress log folder/files
@@ -959,6 +1022,20 @@ class AllStaticFuncs(object):
                 LOGGER.warn("Failed to compress log file [%s]" %file_name)
         else:
             LOGGER.error("Log folder/file does not exist")
+
+    @staticmethod
+    def genHtmlOutputFormat(phase="", status="passed", output =""):
+        tmp_whole_info = ""
+        tmp_whole_info = ("%(phase)s :\n"
+                          "\tStatus:\n"
+                          "\t\t%(status)s\n"
+                          "\tOutput:\n"
+                          "\t\t%(output)s\n" 
+                          %dict(phase=phase,
+                                status=status,
+                                output=output.replace(os.linesep,
+                                                      os.linesep+"\t\t")))
+        return tmp_whole_info
 
 class MultipleProcessRun(object):
     """Class which supports multiple process running for virtualization
@@ -1045,6 +1122,7 @@ class MultipleProcessRun(object):
                         break
             else:
                 self.all_result.append([tm_tc_map["tc_host"], [tm_tc_map]])
+        print self.all_result
         return self.all_result
 
 class LoggerHandling(object):
@@ -1112,9 +1190,9 @@ def main():
     #Instance for multiple process
     if host_list:
         mpr = MultipleProcessRun(host_list, task_list)
-
+        tcmap=mpr.getResultMap()
         AllStaticFuncs.warp_generate_html_report(
-            tcmap=mpr.getResultMap(),
+            tcmap=tcmap,
             htmllogname = os.getenv("BUILD_TAG", "Test_Report") + ".html",
             desc=("Automation test tool is only for installing guest"
                   " on remote server.\n\tFunctions:\n"
@@ -1124,7 +1202,7 @@ def main():
                   "\t\t4. Verify the installing result."),
             start_time=start_time)
         AllStaticFuncs.compressFile(AllStaticFuncs.getBuildPath())
-        AllStaticFuncs.genEnv2File("here should add output info")
+        AllStaticFuncs.inputResult2EnvFile(tcmap)
     else:
         AllStaticFuncs.genEnv2File("here is no available host now")
         LOGGER.warn("There is no available host now")
