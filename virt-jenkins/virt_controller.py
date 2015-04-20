@@ -682,14 +682,15 @@ def runCMDNonBlocked(cmd, timeout=5):
     return (return_code, result_buf, start_time, end_time)
 
 def _parseOutput(output,
-                 start_key="**** Test in progress ****",
-                 end_key="**** Test run complete ****"):
+                 start_key="Test in progress",
+                 end_key="Test run complete"):
     output_list = []
     start_key_index = 0
     end_key_index = 0
     output_list = output.split(os.linesep)
+    
     for index, item in enumerate(output_list):
-        if re.search(start_key, item, re.I):
+        if re.search(r'%s' %start_key, item, re.I):
             start_key_index = index
         elif re.search(end_key, item, re.I):
             end_key_index = index
@@ -698,7 +699,9 @@ def _parseOutput(output,
     if end_key_index == start_key_index:
         return output
     else:
-        return "\n".join(output_list[start_key_index, end_key_index+1])
+        output_list = map(lambda x: re.sub("^.*STDOUT  job *", "", x), 
+                             output_list[start_key_index:end_key_index+1])
+        return "\n".join(output_list)
 
 
 def _installHost(host_ip, ins_type="http", suse_os="sles-11",
@@ -745,7 +748,7 @@ def _installHost(host_ip, ins_type="http", suse_os="sles-11",
         cmd = "./test"
     LOGGER.info(("Start to install host with cmd[%s] on machine %s"
                  %(cmd, host_ip)))
-    return runCMDNonBlocked(cmd, timeout=3600)
+    return runCMDNonBlocked(cmd, timeout=4800)
 
 def _installGuest(host_ip):
     """Function which installing guest by hamsta API
@@ -791,10 +794,10 @@ def runVirtCMD(task, log, queue=None, timeout=5):
     #cmd = "/root/virt/cmdreinstall"
 
     return_code, ih_result_buf, start_time, end_time = _installHost(host_ip)
+    ih_result_buf = _parseOutput(ih_result_buf)
     result_buf = "Parse 1:\n\tStatus :%s\n\tResult :%s\n\n" %(return_code,
                                                               ih_result_buf)
     LOGGER.debug("Parse 1 ,Return output: [%s]" %result_buf)
-
     if return_code == 0:
         return_code, ig_result_buf, _ig_start_time, end_time = _installGuest(host_ip)
         #Get guest installing info from test result
@@ -928,15 +931,10 @@ class AllStaticFuncs(object):
 
     @staticmethod
     def genEnv2File(var_value="", var_name="OUTPUT", file_name="env.file"):
-        jobs_path = os.getenv("WORKSPACE", "./")
+        jobs_path = AllStaticFuncs.getBuildPath()
         env_file_path = os.path.join(jobs_path, file_name)
-        if os.path.exists(file_name):
-            os.remove(env_file_path)
-        with open(file_name, "w+") as ef_f:
+        with open(env_file_path, "w+") as ef_f:
             ef_f.write("%s=%s" %(var_name, var_value))
-
-        LOGGER.debug("Wait 2 seconds for finished flush of I/O")
-        time.sleep(2)
 
     @staticmethod
     def compressFile(file_name):
@@ -1102,6 +1100,8 @@ def main():
     param_opt = ParseCMDParam()
     options, _args = param_opt.parse_args()
 
+    #Inject empty value to environment variable of jenkins
+    AllStaticFuncs.genEnv2File("")
     #Add host address to queue for multiple processes
     host_list = AllStaticFuncs.getAvailHost(options.host_list.split(","))
     task_list = options.task_list.strip().split(",")
@@ -1137,3 +1137,4 @@ LOGGER = LoggerHandling(os.path.join(AllStaticFuncs.getBuildPath(), "sys.log"))
 
 if __name__ == "__main__":
     main()
+    
