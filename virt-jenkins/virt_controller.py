@@ -637,11 +637,12 @@ def runCMDBlocked(cmd):
     result = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE)
 
+    LOGGER.info("Execute cmd :%s" %cmd)
     (r_stdout, r_stderr) = result.communicate(result)
     #output = "%s\n%s" %(r_stdout, r_stderr)
     return_code = result.returncode
-
-    return (return_code, r_stdout)
+    LOGGER.info("Returned info :%s" %(r_stdout + r_stderr))
+    return (return_code, r_stdout + r_stderr)
 
 def runCMDNonBlocked(cmd, timeout=5):
     """Run command line with non-blocking format
@@ -680,116 +681,315 @@ def runCMDNonBlocked(cmd, timeout=5):
 
     return (return_code, result_buf, start_time, end_time)
 
-def _parseOutput(output,
-                 start_key="Test in progress",
-                 end_key="Test run complete"):
+class VirtOpt(object):
 
-    output_list = []
-    job_id = 0
-    start_key_index = 0
-    end_key_index = 0
+    def __init__(self, prd, queue):
 
-    se_job_id = re.search("internal id: (\d+)", output)
-    if se_job_id:
-        job_id = se_job_id.groups()[0]
+        #Split product info
+        self.prd = prd
+        self.queue = queue
+        self.repo_type = "http"
+        self.prd_ver, self.virt_type = prd.split(".")
+        #self.prd_os, self.rel_ver, self.prd_sp, self.prd_bit = self.prd_ver.split("-")
+        self.host = ""
+        self.logname = ""
 
-    if DEBUG:
-        job_id = "929"
+        self.result = ""
+        self.status = True
+        self.timeout_flag = False
 
-    cmd_get_subcase_result = "/usr/share/hamsta/feed_hamsta.pl 127.0.0.1 --query_log %s" %(job_id)
-    return_id, case_result = runCMDBlocked(cmd_get_subcase_result)
-    output_list = case_result.split(os.linesep)
+        self.feed_hamsta = "/usr/share/hamsta/feed_hamsta.pl"
+        self.get_source = "/usr/share/qa/virtautolib/lib/get-source.sh"
 
-    for index, item in enumerate(output_list):
-        if re.search(start_key, item, re.I):
-            start_key_index = index
-        elif re.search(end_key, item, re.I):
-            end_key_index = index
-            break
-    if not end_key_index:
-        end_key_index = index
-    if end_key_index == start_key_index:
-        return case_result
-    else:
-        output_list = map(lambda x: re.sub("^.*STDOUT  job *", "", x), 
-                             output_list[start_key_index:end_key_index+1])
-        return "\n".join(output_list)
+        self.cmd_getoutput = self.feed_hamsta + " 127.0.0.1 --query_log %s"
+        self.cmd_getstatus = self.feed_hamsta + " 127.0.0.1 --query_job %s"
+        self.cmd_installhost = (self.feed_hamsta + " -t 5 --re_url  %(img_repo)s "
+                                "--re_sdk %(addon_repo)s --pattern kvm_server "
+                                "-rpms qa_test_virtualization -h %(host)s 127.0.0.1 -w")
+        self.cmd_installguest = (self.feed_hamsta + " -x "
+                                 "\"%(guest_script)s\" -h %(host)s 127.0.0.1 -w")
+        
+        self.start_time = datetime.datetime.now()
+        
+        #Get host addr from queue
+        self.reserveHost()
+        self.getLogName()
 
+    def getLogName(self):
+        """Get initial log path
+        """
+        logpath = AllStaticFuncs.getBuildPath()
+        LOGGER.debug("Get build log path :%s" %logpath)
+        self.logname = os.path.join(logpath, self.prd)
 
-def _installHost(host_ip, ins_type="http", suse_os="sles-11",
-                 suse_sp="sp4", bit="64"):
-    """Function which reinstalling host by hamsta API
-    """
-    def _getRepoSource():
+    def writeLog2File(self):
+        """Write output info of command line to file
+        """
+        #LOGGER.debug(("Write log to file , params :[task=%s,returncode=%d,"
+        #              "logname=%s,host=%s,content=%s]" %(task, returncode,
+        #                                                 logname, host, content)))
+        end_time = datetime.datetime.now()
+        print self.logname,"aaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        if os.path.exists(self.logname):
+            os.remove(self.logname)
+        with open(self.logname, "a+") as f:
+            f.write("Task : %s" %(self.prd) + os.linesep)
+            f.write("Host : %s" %(self.host) + os.linesep)
+            if self.status:
+                f.write("Status : Passed" + os.linesep)
+            else:
+                if self.timeout_flag:
+                    f.write("Status : Timeout" + os.linesep)
+                else:
+                    f.write("Status : Failed" + os.linesep)
+
+            f.write(os.linesep)
+            f.write("Running time : %s" %(end_time - self.start_time) + os.linesep)
+            f.write("-" * 30 + os.linesep)
+            f.write(os.linesep)
+            f.write("Output : " + os.linesep +
+                    ("\t%s" %(self.result.replace(os.linesep, os.linesep+"\t"))))
+            f.flush()
+            f.close()
+
+    def getJobStatus(self,output, search_key="internal id: (\d+)"):
+        
+        se_job_id = re.search(search_key, output)
+        if se_job_id:
+            job_id = se_job_id.groups()[0]
+        cmd_get_job_status = self.cmd_getstatus %(job_id)
+        status_buf= runCMDNonBlocked(cmd_get_job_status, timeout=10)[1]
+        job_status = re.search("stauts : (\S+)", status_buf, ).groups()[0].strip()
+        
+        return job_status
+        
+    def _parseOutput(self,
+                     output,
+                     all_scope=False,
+                     search_key="internal id: (\d+)",
+                     start_key="Test in progress",
+                     end_key="Test run complete"):
+    
+        output_list = []
+        job_id = 0
+        start_key_index = 0
+        end_key_index = 0
+        se_job_id = re.search(search_key, output)
+        if se_job_id:
+            job_id = se_job_id.groups()[0]
+    
+        if DEBUG:
+            job_id = "929"
+
+        cmd_get_result = self.cmd_getoutput %(job_id)
+        return_id, case_result = runCMDBlocked(cmd_get_result)
+
+        if all_scope:
+            return case_result
+        else:
+            result_details = case_result.split(os.linesep)
+        
+            for index, item in enumerate(result_details):
+                if re.search(start_key, item, re.I):
+                    start_key_index = index
+                elif re.search(end_key, item, re.I):
+                    end_key_index = index
+                    break
+            if not end_key_index:
+                end_key_index = index
+            if end_key_index == start_key_index:
+                return case_result
+            else:
+                result_details = map(lambda x: re.sub("^.*STDOUT  job *", "", x), 
+                                     result_details[start_key_index:end_key_index+1])
+                return "\n".join(result_details)
+
+    def _getRepoSource(self):
         """FUnction which getting reinstalling repository 
         """
-        source_name = "source.%s.%s-%s-%s" %(ins_type, suse_os, suse_sp, bit)
-        prefix_cmd_get_source = "/usr/share/qa/virtautolib/lib/get-source.sh"
+        source_prd = "source.%s.%s"%(self.repo_type, self.prd_ver.lower())
 
-        if not os.path.exists(prefix_cmd_get_source):
+        if not os.path.exists(self.get_source):
             LOGGER.error(("Failed to get repository due to %s does not exist"
                           %prefix_cmd_get_source))
         
-            return (1, "Can not run func [%s] which does not exist !!" %prefix_cmd_get_source)
+            return (10, "Can not run func [%s] which does not exist !!" %self.get_source)
 
-        prefix_cmd_get_source = prefix_cmd_get_source + " -p %s"
-        cmd_get_source = prefix_cmd_get_source %(source_name)
+        cmd_get_repo =  self.get_source + " -p " + source_prd
 
-        LOGGER.info("Get reporsitory with cmd[%s]" %(cmd_get_source))
-        return runCMDBlocked(cmd_get_source)
+        LOGGER.info("Get reporsitory with cmd[%s]" %(cmd_get_repo))
+        return runCMDBlocked(cmd_get_repo)
 
-    return_code, result_buf = _getRepoSource()
-    if return_code != 0:
-        LOGGER.error("Failed to install host due to :%s" %result_buf)
-        return (return_code, "Cause: " + result_buf,
-                datetime.datetime.now(), datetime.datetime.now())
+    def _installHost(self, timeout=4800):
+        """Function which reinstalling host by hamsta API
+        """
+    
+        return_code, result_buf = self._getRepoSource()
 
-    install_repo = result_buf.strip()
-    LOGGER.debug("Repo for installing source [%s]"  %(install_repo))
-    addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/SLE-11-SP4/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/Tests/SLE_11_SP4/"
-    rpms = "qa_test_virtualization"
-    pattern = "kvm_server"
-    cmd = ("/usr/share/hamsta/feed_hamsta.pl -t 5 --re_url  %(install_repo)s "
-           "--re_sdk %(addon_repo)s --pattern %(pattern)s -rpms %(rpms)s -h "
-           "%(host_ip)s 127.0.0.1 -w" %dict(install_repo=install_repo,
-                                            addon_repo=addon_repo,
-                                            rpms=rpms,
-                                            pattern=pattern,
-                                            host_ip=host_ip,))
-    if DEBUG:
-        cmd = "./test"
-    LOGGER.info(("Start to install host with cmd[%s] on machine %s"
-                 %(cmd, host_ip)))
-    return runCMDNonBlocked(cmd, timeout=4800)
+        if return_code != 0:
+            LOGGER.error("Failed to install host due to :%s" %result_buf)
+            return (return_code, "Cause: " + result_buf,
+                    datetime.datetime.now(), datetime.datetime.now())
+    
+        host_img_repo = result_buf.strip()
 
-def _installGuest(host_ip):
-    """Function which installing guest by hamsta API
-    """
-    cmd1 = "scp /root/virt/virt-simple.tcf root@%s:/usr/share/qa/tcf/" %host_ip
-    cmd2 = "scp /root/virt/virt-simple-run root@%s:/usr/share/qa/tools/" %host_ip
-    cmd3 = "scp /root/virt/source.cn root@%s:/usr/share/qa/virtautolib/data/" %host_ip
-    cmd4 = "ssh root@%s \"mkdir /.virtinst\"" %host_ip
-    runCMDBlocked(cmd1)
-    runCMDBlocked(cmd2)
-    runCMDBlocked(cmd3)
-    runCMDBlocked(cmd4)
+        LOGGER.debug("Repo for installing source [%s]"  %(host_img_repo))
 
-    cmd = ("/usr/share/hamsta/feed_hamsta.pl -x "
-           "\"/usr/share/qa/tools/virt-simple-run\" "
-           "-h %s 127.0.0.1 -w" %(host_ip))
-    if DEBUG:
-        cmd = "./test ttttttttttttttttttttttttttt"
-    LOGGER.info(("Start to install guest with cmd[%s] on host %s"
-                 %(cmd, host_ip)))
-    return runCMDNonBlocked(cmd, timeout=7200)
+        addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/SLE-11-SP4/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/Tests/SLE_11_SP4/"
+        
+        cmd_install_host = (self.cmd_installhost %dict(img_repo=host_img_repo,
+                                                       addon_repo=addon_repo,
+                                                       host=self.host,))
+        if DEBUG:
+            cmd_install_host = "./test test"
 
-def _upgrateHost(host_ip):
-    pass
+        LOGGER.info(("Start to install host with cmd[%s] on machine %s"
+                     %(cmd_install_host, self.host)))
+        (return_code, hamsta_output,
+         start_time, end_time) = runCMDNonBlocked(cmd_install_host, timeout=timeout)
+        result_all = self._parseOutput(hamsta_output, all_scope=True)
 
-def runVirtCMD(task, log, queue=None, timeout=5):
+        if DEBUG:
+            job_status = "passed"
+        else:
+            job_status = self.getJobStatus(hamsta_output)
+        
+        self.result = AllStaticFuncs.genHtmlOutputFormat("Parse 1",
+                                                         job_status,
+                                                         result_all)
+        if return_code == 0:
+            if job_status == "passed":
+                self.status = True
+                job_status_code = 0
+                LOGGER.info("Finished the host installing operation")
+            else:
+                self.status = False
+                job_status_code = -1
+                LOGGER.error("Failed to execute hamsta job, cause :[%s]" %hamsta_output)
+        else:
+            if return_code == 10:
+                job_status_code = 10
+                self.timeout_flag = True
+            else:
+                self.status = False
+                job_status_code = return_code
+            LOGGER.warn("Failed to reinstall on machine %s" %host_ip)
+
+        return (job_status_code, self.result, start_time, end_time)
+
+    def _installGuest(self, ig_stript="/usr/share/qa/tools/virt-simple-run", timeout=7200):
+        """Function which installing guest by hamsta API
+        """
+        if self.status:
+            cmd1 = "scp /root/virt/virt-simple.tcf root@%s:/usr/share/qa/tcf/" %self.host
+            cmd2 = "scp /root/virt/virt-simple-run root@%s:/usr/share/qa/tools/" %self.host
+            cmd3 = "scp /root/virt/source.cn root@%s:/usr/share/qa/virtautolib/data/" %self.host
+            cmd4 = "ssh root@%s \"mkdir /.virtinst\"" %self.host
+            runCMDBlocked(cmd1)
+            runCMDBlocked(cmd2)
+            runCMDBlocked(cmd3)
+            runCMDBlocked(cmd4)
+        
+            cmd_install_guest = (self.cmd_installguest %dict(guest_script=ig_stript,
+                                                             host=self.host))
+            if DEBUG:
+                cmd_install_guest = "./test ttttttttttttttttttttttttttt"
+            LOGGER.info(("Start to install guest with cmd[%s] on host %s"
+                         %(cmd_install_guest, self.host)))
+
+            (return_code, hamsta_output,
+             start_time, end_time) = runCMDNonBlocked(cmd_install_guest, timeout=timeout)
+            
+            if return_code == 0:
+                result_details = self._parseOutput(hamsta_output)
+                return_all = self._parseOutput(hamsta_output, all_scope=True)
+            else:
+                result_details = hamsta_output
+                return_all = hamsta_output
+            
+            fmt_result_outline = AllStaticFuncs.genHtmlOutputFormat("Parse 2",
+                                                                    return_code,
+                                                                    result_details)
+            fmt_result_all = AllStaticFuncs.genHtmlOutputFormat("Parse 2",
+                                                                return_code,
+                                                                return_all)
+            LOGGER.info("OUTPUT:" + return_all)
+            if DEBUG:
+                job_status = "passed"
+            else:
+                job_status = self.getJobStatus(hamsta_output)
+
+            if return_code == 0:
+                if job_status == "passed":
+                    job_status_code = 0
+                    self.status = True
+                    LOGGER.info("Finished installing guest on host machine")
+                else:
+                    job_status_code = -1
+                    self.status = False
+                    LOGGER.error("Failed to install guest on host %s" %self.host)
+            else:
+                if return_code == 10:
+                    job_status_code = 10
+                    self.timeout_flag = True
+                else:
+                    job_status_code = return_code
+                    self.status = False
+                LOGGER.warn("Failed to execute hamsta job ,cause :[%s]" %hamsta_output)
+            self.result = self.result + fmt_result_all
+            return (job_status_code, self.result, start_time, end_time)
+        else:
+            return (None,None,None,None,None)
+
+    def reserveHost(self):
+
+        self.host = self.queue.get(block=True, timeout=2)
+        while not AllStaticFuncs.checkIPAddress(self.host):
+            LOGGER.debug("Host [%s] is busy" %self.host)
+            time.sleep(2)
+            self.releaseHost(self.host)
+            self.host = self.queue.get(block=True, timeout=2)
+            LOGGER.debug("Switch another host [%s]" %self.host)
+
+    def releaseHost(self):
+        self.queue.put(self.host)
+
+def GuestInstalling(prd, queue=None,):
     """Run command line with non-blocking format
     """
-    LOGGER.info("Task [%s] starts to run now" %task)
+    LOGGER.info('aaaaaaaaaaaaaaaaaaaaa %d' %queue.qsize())
+    LOGGER.info("Product version [%s] starts to run now" %prd)
+    vir_opt = VirtOpt(prd, queue)
+
+    LOGGER.debug("Running on host [%s]" %vir_opt.host)
+
+    (return_code, ih_result_all,
+     start_time, end_time) = vir_opt._installHost()
+     
+    #ih_result_buf = _parseOutput(ih_result_buf)
+
+    LOGGER.debug(ih_result_all)
+
+
+    (return_code, ig_result_outline, 
+     _ig_start_time, end_time) = vir_opt._installGuest()
+
+    vir_opt.releaseHost()
+    vir_opt.writeLog2File()
+
+    LOGGER.info("Product version [%s] finished" %prd)
+    if ig_result_outline is not None:
+        result_outline = ih_result_all + ig_result_outline
+    return (prd, vir_opt.host, return_code, 
+            result_outline, start_time, end_time, vir_opt.logname)
+
+def upgrateHost(org_prd, dest_prd, log, queue=None, timeout=5):
+    """Run command line with non-blocking format
+    """
+    pro_ver, virt_type = org_prd.split(".")
+    pro_os, pro_sp, pro_bit = pro_ver.split("-")
+
+    LOGGER.info("Task [%s] starts to run now" %org_prd)
     host_ip = queue.get(block=True, timeout=2)
 
     #TODO, this is not secure when all hosts are hanged
@@ -800,27 +1000,26 @@ def runVirtCMD(task, log, queue=None, timeout=5):
         queue.put(host_ip)
         host_ip = queue.get(block=True, timeout=2)
         LOGGER.debug("Switch another host [%s]" %host_ip)
-
+    '''
     LOGGER.debug("Running on host [%s]" %host_ip)
-    #print "current param1 :%s \npid is :%s" %(task, os.getpid())
-    #cmd = "/root/virt/cmdreinstall"
 
-    return_code, ih_result_buf, start_time, end_time = _installHost(host_ip)
+    (return_code, ih_result_buf,
+     start_time, end_time) = _installHost(host_ip,
+                                         os=pro_os.lower(),
+                                         sp=pro_sp.lower(),
+                                         bit=pro_bit)
     #ih_result_buf = _parseOutput(ih_result_buf)
     result_buf1_all = AllStaticFuncs.genHtmlOutputFormat("Parse 1",
                                                         return_code,
                                                         ih_result_buf)
-    
-    
-    #"Parse 1:\n\tStatus :%s\n\tResult :%s\n\n" %(return_code,
-    #                                             ih_result_buf)
     LOGGER.debug(result_buf1_all)
-
     '''
     return_code = 0
     result_buf1_all = ""
     start_time = datetime.datetime.now()
-    '''
+    
+    result_buf2_all = ""
+    result_buf2_outline = ""
     if return_code == 0:
         return_code, ig_result_buf, _ig_start_time, end_time = _installGuest(host_ip)
         #Get guest installing info from test result
@@ -834,7 +1033,7 @@ def runVirtCMD(task, log, queue=None, timeout=5):
                                                              ig_result_buf)
         LOGGER.info("OUTPUT:" + ig_result_buf)
         if return_code != 0:
-            LOGGER.warn("Failed to install guest on host %s" %host_ip)
+            LOGGER.warn("Failed to install guest on host %s" %self.host)
     else:
         LOGGER.warn("Failed to reinstall on machine %s" %host_ip)
 
@@ -855,6 +1054,76 @@ class ParseCMDParam(optparse.OptionParser):
     """
 
     def __init__(self):
+        optparse.OptionParser.__init__(
+            self, 
+            usage='Usage: %prog [options]',
+            epilog="NOTE: Only one kind of test at once is supported.")
+
+        self.add_option("-t", "--test-type", action="store", type="string",
+                        dest="test_type",
+                        help=("Set test type, gi|hu|gm is available"))
+        self.add_option("-r", "--repository", action="store", type="string",
+                        dest="repo",
+                        help=("Set path of repositroy for installing virtualization"))
+        #Guest installing test parameters 
+        group = optparse.OptionGroup(
+            self,
+            "Prj1:Guest Installing",
+            "Execute test of guest installing on virtualization")
+
+        self.add_option_group(group)
+        group.add_option("--gi-host", action="store", type="string",
+                        dest="gi_host_list",
+                        help=("Set one or multiple hosts to run "
+                              "guest installing case with distributed"))
+        group.add_option("--host-product", action="store", type="string",
+                        dest="gi_product_list",
+                        help=("Specify one or more product verion to be ran"))
+
+        #Host upgrade and vm-guest verfication test parameters
+        group = optparse.OptionGroup(
+            self,
+            "Prj2:Host Upgrade",
+            "Execute test for host upgrade and vm-guest verfication on virtualization")
+
+        self.add_option_group(group)
+        group.add_option("--hu-host", action="store", type="string",
+                        dest="hu_host_list",
+                        help=("Set one or multiple hosts to run "
+                              "host upgrade case with distributed"))
+        group.add_option("--org-product", action="store", type="string",
+                        dest="org_product_list",
+                        help=("Set orginal product version"))
+        group.add_option("--upg-product", action="store", type="string",
+                        dest="upg_product_list",
+                        help=("Set upgraded product version"))
+        '''
+        #Guest migration test parameters
+        group = optparse.OptionGroup(
+            self,
+            "Prj3:Guest Migration",
+            "Execute test for guest migration on virtualization")
+
+        self.add_option_group(group)
+        group.add_option("--org-host", action="store", type="string",
+                        dest="org_host_list",
+                        help=("Set orginal host addr"))
+        group.add_option("--dest-host", action="store", type="string",
+                        dest="dest_host_list",
+                        help=("Set destination host addr"))
+        group.add_option("-p", "--product", action="store", type="string",
+                        dest="product_list",
+                        help=("Set product version"))
+
+        '''
+        #Guest migration test parameters
+        LOGGER.debug("Params : " + str(sys.argv))
+'''
+class ParseCMDParam(optparse.OptionParser):
+    """Class which parses command parameters
+    """
+
+    def __init__(self):
         optparse.OptionParser.__init__(self, usage='Usage: %prog [options]')
 
         self.add_option("-H", "--Host", action="store", type="string",
@@ -864,7 +1133,7 @@ class ParseCMDParam(optparse.OptionParser):
                         dest="task_list",
                         help=("Delete a node or multiple node"))
         LOGGER.debug("Params : " + str(sys.argv))
-
+'''
 class AllStaticFuncs(object):
     """Class which contains all staticmethod functions
     """
@@ -989,7 +1258,7 @@ class AllStaticFuncs(object):
                         timeout_tc += 1
                     output = output + "-" + "\t"*2 + str(ele_info["tc_id"]) + ": " + str(ele_info["tc_status"]) + "\\\n"
             output = output +"\\\n"
-            output = output + "\t" + "*" * 30 + "\\\n"    
+            output = output + "\t" + "-" * 50 + "\\\n"    
             output = output + ".\t" + "Statistic" + ":\\\n"
             output = output + "-\t\t" + "Passed :" + str(passed_tc) + ":\\\n"
             output = output + "-\t\t" + "Failed :" + str(failed_tc) + ":\\\n"
@@ -1041,22 +1310,49 @@ class MultipleProcessRun(object):
     """Class which supports multiple process running for virtualization
     """
 
-    def __init__(self, host_list, task_list):
+    def __init__(self, options):
         """Initial process pool
         """
-        self.host_list = host_list
-        self.task_list = task_list
         self.result = []
-        self.queue = multiprocessing.Manager().Queue()
         self.all_result = []
-        self.logpath = AllStaticFuncs.getBuildPath()
-        LOGGER.debug("Get build log path :%s" % self.logpath)
+        self.mulpool_status = dict(status=0, info="")
+        self.queue = multiprocessing.Manager().Queue()
+        #self.logpath = AllStaticFuncs.getBuildPath()
+        #LOGGER.debug("Get build log path :%s" % self.logpath)
+    
+        self.test_type = options.test_type    
+        if self.test_type == "gi":
+            self.host_list = AllStaticFuncs.getAvailHost(options.gi_host_list.split(","))
+            self.task_list = options.gi_product_list.strip().split(",")
+            print self.host_list, self.task_list
+            self._guestInstall()
+        elif self.test_type == "hu":
+            self.host_list = AllStaticFuncs.getAvailHost(options.hu_host_list.split(","))
+            self.org_prd_list = options.org_product_list.strip().split(",")
+            self.upg_prd_list = options.upg_product_list.strip().split(",")
+
+
+    def _guestInstall(self):
         #Pool size is defined through host number.
-        self.pool = multiprocessing.Pool(processes=len(self.host_list))
-        LOGGER.debug("Create process pool[%d]" %len(self.host_list))
-        self.initialQueue()
-        self.execMultipleTask()
-        self.closeAndJoinPool()
+        if self.host_list:
+            self.pool = multiprocessing.Pool(processes=len(self.host_list))
+            LOGGER.debug("Create process pool[%d]" %len(self.host_list))
+            self.initialQueue()
+            self._giMultipleTask()
+            self.closeAndJoinPool()
+        else:
+            self.mulpool_status[status]= 10
+            self.mulpool_status[info] = "There is no available host"
+
+    def _giMultipleTask(self):
+        """Execute multiple taskes in processes pool only for guest installing
+        """
+        for task in self.task_list:
+            self.result.append([task,
+                                self.pool.apply_async(
+                                    GuestInstalling,
+                                    (task, self.queue)
+                                    )])
 
     def initialQueue(self):
         """Initial queue, add host name to queue
@@ -1064,16 +1360,6 @@ class MultipleProcessRun(object):
         LOGGER.debug("Initial queue with host name")
         for host in self.host_list:
             self.queue.put(host)
-
-    def execMultipleTask(self):
-        """Execute multiple taskes in processes pool
-        """
-        for task in self.task_list:
-            self.result.append([task,
-                                self.pool.apply_async(
-                                    runVirtCMD,
-                                    (task, self.getLogName(task), self.queue)
-                                    )])
 
     def getLogName(self, filename):
         """Get initial log path
@@ -1124,6 +1410,9 @@ class MultipleProcessRun(object):
                 self.all_result.append([tm_tc_map["tc_host"], [tm_tc_map]])
         print self.all_result
         return self.all_result
+
+    def getMulPoolStatus(self):
+        return self.mulpool_status
 
 class LoggerHandling(object):
     """Class which support to add five kind of level info to file
@@ -1180,16 +1469,10 @@ def main():
 
     #Inject empty value to environment variable of jenkins
     AllStaticFuncs.genEnv2File("")
-    #Add host address to queue for multiple processes
-    host_list = AllStaticFuncs.getAvailHost(options.host_list.split(","))
-    task_list = options.task_list.strip().split(",")
-
-    LOGGER.debug("Host List :" + str(host_list))
-    LOGGER.debug("Task List :" + str(task_list))
 
     #Instance for multiple process
-    if host_list:
-        mpr = MultipleProcessRun(host_list, task_list)
+    mpr = MultipleProcessRun(options)
+    if mpr.getMulPoolStatus()["status"] == 0:
         tcmap=mpr.getResultMap()
         AllStaticFuncs.warp_generate_html_report(
             tcmap=tcmap,
@@ -1203,11 +1486,14 @@ def main():
             start_time=start_time)
         AllStaticFuncs.compressFile(AllStaticFuncs.getBuildPath())
         AllStaticFuncs.inputResult2EnvFile(tcmap)
+        exit_code = 0
     else:
-        AllStaticFuncs.genEnv2File("here is no available host now")
-        LOGGER.warn("There is no available host now")
-        sys.exit(5)
+        AllStaticFuncs.genEnv2File(mpr.getMulPoolStatus()["info"])
+        LOGGER.warn(mpr.getMulPoolStatus()[info])
+        exit_code = 5
     LOGGER.info("End")
+    sys.exit(exit_code)
+
 
 DEBUG = False
 #DEBUG = True
