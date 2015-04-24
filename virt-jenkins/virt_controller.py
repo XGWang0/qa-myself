@@ -681,7 +681,7 @@ def runCMDNonBlocked(cmd, timeout=5):
 
     return (return_code, result_buf, start_time, end_time)
 
-class VirtOpt(object):
+class GuestInstalling(object):
 
     def __init__(self, prd, queue):
 
@@ -693,6 +693,7 @@ class VirtOpt(object):
         #self.prd_os, self.rel_ver, self.prd_sp, self.prd_bit = self.prd_ver.split("-")
         self.host = ""
         self.logname = ""
+        self.qadb_link = ""
 
         self.result = []
         self.status = True
@@ -771,7 +772,29 @@ class VirtOpt(object):
         job_status = re.search("stauts : (\S+)", status_buf, ).groups()[0].strip()
         
         return job_status
+
+    def getJobID(self, output, search_key="internal id: (\d+)"):
+        '''Get job id from hamsta output
+        '''
+        se_job_id = re.search(search_key, output)
+        if se_job_id:
+            return se_job_id.groups()[0]
+        else:
+            return 0
+
+    def getQadbURL(self, output, search_key="http:.*submission_id.*"):
+        '''Get job url of QADB from hamsta output
+        '''
+        case_result = self.parseOutput(output, all_scope=True)
+        se_qadb_url = re.search(search_key, case_result, re.I)
         
+        if se_qadb_url:
+            return se_qadb_url.group()
+        else:
+            LOGGER.warn("Failed to get QADB url for test suite, use local suite log")
+            return  os.path.join(AllStaticFuncs.getJobURL(), "ws",
+                                 "LOG", os.getenv("BUILD_TAG", ""), self.prd)
+
     def parseOutput(self,
                      output,
                      all_scope=False,
@@ -783,6 +806,7 @@ class VirtOpt(object):
         job_id = 0
         start_key_index = 0
         end_key_index = 0
+        #Get job id
         se_job_id = re.search(search_key, output)
         if se_job_id:
             job_id = se_job_id.groups()[0]
@@ -796,8 +820,10 @@ class VirtOpt(object):
         return_id, case_result = runCMDBlocked(cmd_get_result)
 
         if all_scope:
+            #Get all output
             return case_result
         else:
+            #Get part of output
             result_details = case_result.split(os.linesep)
         
             for index, item in enumerate(result_details):
@@ -834,7 +860,7 @@ class VirtOpt(object):
     def _installHost(self, timeout=4800):
         """Function which reinstalling host by hamsta API
         """
-    
+        #Get host install repository 
         return_code, result_buf = self.getRepoSource()
 
         if return_code != 0:
@@ -845,7 +871,7 @@ class VirtOpt(object):
         host_img_repo = result_buf.strip()
 
         LOGGER.debug("Repo for installing source [%s]"  %(host_img_repo))
-
+        #Temorary repo for test, will be remove
         addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/SLE-11-SP4/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/Tests/SLE_11_SP4/"
         
         cmd_install_host = (self.cmd_installhost %dict(img_repo=host_img_repo,
@@ -867,6 +893,7 @@ class VirtOpt(object):
         else:
             job_status = self.getJobStatus(hamsta_output)
 
+        #Analyze hamsta status and job status
         if return_code == 0:
             if job_status == "passed":
                 self.status = True
@@ -884,7 +911,7 @@ class VirtOpt(object):
                 job_status_code = return_code
             self.status = False
             LOGGER.warn("Failed to reinstall on machine %s" %self.host)
-        
+        #Format job output
         result = AllStaticFuncs.genHtmlOutputFormat("Parse 1",
                                                     job_status,
                                                     result_all)
@@ -903,6 +930,7 @@ class VirtOpt(object):
         """Function which installing guest by hamsta API
         """
         if self.status:
+            #TODO START only for test, will be remove.
             cmd1 = "scp /root/virt/virt-simple.tcf root@%s:/usr/share/qa/tcf/" %self.host
             cmd2 = "scp /root/virt/virt-simple-run root@%s:/usr/share/qa/tools/" %self.host
             cmd3 = "scp /root/virt/source.cn root@%s:/usr/share/qa/virtautolib/data/" %self.host
@@ -911,7 +939,7 @@ class VirtOpt(object):
             runCMDBlocked(cmd2)
             runCMDBlocked(cmd3)
             runCMDBlocked(cmd4)
-        
+            #TODO END
             cmd_install_guest = (self.cmd_installguest %dict(guest_script=ig_stript,
                                                              host=self.host))
             if DEBUG:
@@ -919,14 +947,18 @@ class VirtOpt(object):
             LOGGER.info(("Start to install guest with cmd[%s] on host %s"
                          %(cmd_install_guest, self.host)))
 
+            #Install guest in parallel on host
             (return_code, hamsta_output,
              start_time, end_time) = runCMDNonBlocked(cmd_install_guest, timeout=timeout)
+            #Get qadb link for test suite
+            self.qadb_link = self.getQadbURL(hamsta_output)
 
             if DEBUG:
                 job_status = "passed"
             else:
                 job_status = self.getJobStatus(hamsta_output)
-            
+
+            #Analyze hamsta status and job status
             if return_code == 0:
                 if job_status == "passed":
                     job_status_code = 0
@@ -952,16 +984,15 @@ class VirtOpt(object):
                 return_all = hamsta_output
 
             LOGGER.info("OUTPUT:" + return_all)
-            
+
+            #Format job output            
             fmt_result_outline = AllStaticFuncs.genHtmlOutputFormat("Parse 2",
                                                                     job_status,
                                                                     result_details)
             fmt_result_all = AllStaticFuncs.genHtmlOutputFormat("Parse 2",
                                                                 job_status,
                                                                 return_all)
-
-            #self.result = self.result + fmt_result_all
-
+            #Collect job infomation
             result_map = {"job_status":job_status_code,
                           "job_suboutput":fmt_result_outline,
                           "job_alloutput":fmt_result_all,
@@ -972,6 +1003,7 @@ class VirtOpt(object):
             LOGGER.info("Finished installing guest on host machine")
             #return (job_status_code, fmt_result_outline, start_time, end_time)
         else:
+            #Above phase is wrong occasion
             result_map = {"job_status":None,
                           "job_suboutput":None,
                           "job_alloutput":None,
@@ -983,8 +1015,6 @@ class VirtOpt(object):
             #return (None,None,None,None)
         self.result.append(result_map)
 
-    def updateHost(self):
-        pass
     def getResultList(self):
         '''Parse result infomation, return key elements to process pool
         '''
@@ -1011,6 +1041,7 @@ class VirtOpt(object):
 
     def reserveHost(self):
         #TODO, There exists some issue
+        #Get available host form process pool
         self.host = self.queue.get(block=True, timeout=2)
         while not AllStaticFuncs.checkIPAddress(self.host):
             LOGGER.debug("Host [%s] is busy" %self.host)
@@ -1020,12 +1051,14 @@ class VirtOpt(object):
             LOGGER.debug("Switch another host [%s]" %self.host)
 
     def releaseHost(self):
+        '''Return finished host into queue
+        '''
         self.queue.put(self.host)
 
-def GuestInstalling(prd, queue=None,):
+def installGuest(prd, queue=None,):
     """Run command line with non-blocking format
     """
-    vir_opt = VirtOpt(prd, queue)
+    vir_opt = GuestInstalling(prd, queue)
     LOGGER.info("Product version [%s] starts to run on host [%s] now" %(prd, vir_opt.host))
     vir_opt._installHost()
     vir_opt._installGuest()
@@ -1036,71 +1069,120 @@ def GuestInstalling(prd, queue=None,):
     #return (prd, vir_opt.host, return_code, 
     #        result, start_time, end_time, vir_opt.logname)
 
+class HostMigration(GuestInstalling):
+    '''The class is only for host migration test
+    '''
+    def __init__(self, org_prd, dest_prd, queue):
+        '''Initial function, inherit GuestInstalling class
+        '''
+        super(HostMigration, self).__init__(org_prd, queue)
+        self.dest_prd = dest_prd
+        
+        self.cmd_update_host = (self.feed_hamsta +  "-x "
+               "\"/usr/share/qa/virtautolib/lib/vh-update.sh -p vhPrepAndUpdate\" "
+               "-h %s 127.0.0.1 -w")
+        self.cmd_verify_host = (self.feed_hamsta +  "-x "
+               "\"/usr/share/qa/virtautolib/lib/vh-update.sh -p vhUpdatePostVerification\" "
+               "-h %s 127.0.0.1 -w")
+    
+    def updateAndVerifyHost(self, type="update", phase="Parse 3", timeout=600):
+        """Function which update host by hamsta API
+        """
+        if self.status:
+            if DEBUG:
+                cmd_hu_host = "./test ttttttttttttttttttttttttttt"
+            else:
+                if type == "update":
+                    cmd_hu_host = self.cmd_update_host %(self.host)
+                elif type == "verify":
+                    cmd_hu_host = self.cmd_verify_host %(self.host)
+
+            LOGGER.info("Start to upgrade host with cmd [%s] %s" %(cmd_hu_host, self.host))
+            (return_code, hamsta_output,
+             start_time, end_time) = runCMDNonBlocked(cmd_hu_host, timeout=timeout)
+
+            if DEBUG:
+                job_status = "passed"
+            else:
+                job_status = self.getJobStatus(hamsta_output)
+            if return_code == 0:
+                if job_status == "passed":
+                    job_status_code = 0
+                    self.status = True
+                    LOGGER.info("Finished installing guest successfully")
+                else:
+                    job_status_code = -1
+                    self.status = False
+                    LOGGER.error("Failed to install guest on host %s" %self.host)
+
+                result_details = self.parseOutput(hamsta_output)
+                return_all = self.parseOutput(hamsta_output, all_scope=True)
+            else:
+                if return_code == 10:
+                    job_status_code = 10
+                    self.timeout_flag = True
+                else:
+                    job_status_code = return_code
+                    self.status = False
+
+                LOGGER.warn("Failed to execute hamsta job ,cause :[%s]" %hamsta_output)
+                result_details = hamsta_output
+                return_all = hamsta_output
+
+            LOGGER.info("OUTPUT:" + return_all)
+            fmt_result_outline = AllStaticFuncs.genHtmlOutputFormat(phase,
+                                                                    job_status,
+                                                                    result_details)
+            fmt_result_all = AllStaticFuncs.genHtmlOutputFormat(phase,
+                                                                job_status,
+                                                                return_all)
+
+            result_map = {"job_status":job_status_code,
+                          "job_suboutput":fmt_result_outline,
+                          "job_alloutput":fmt_result_all,
+                          "hamsta_output":hamsta_output,
+                          "hamsta_status":return_code,
+                          "start_time":start_time,
+                          "end_time":end_time}
+            LOGGER.info("Finished host upgrade")
+ 
+        else:
+            result_map = {"job_status":None,
+                          "job_suboutput":None,
+                          "job_alloutput":None,
+                          "hamsta_output":None,
+                          "hamsta_status":None,
+                          "start_time":None,
+                          "end_time":None}
+            LOGGER.warn("Guest installing failure, skip host upgrade")
+            #return (None,None,None,None)
+        self.result.append(result_map)
+
+def migrateHost(org_prd, dest_prd, queue=None,):
+    """Run command line with non-blocking format
+    """
+    vir_opt = HostMigration(org_prd, queue)
+    LOGGER.info("Product version [%s] starts to run on host [%s] now" %(org_prd, vir_opt.host))
+    #vir_opt._installHost()
+    #vir_opt._installGuest()
+    vir_opt.updateAndVerifyHost(type="update", phase="Parse 3")
+    vir_opt.updateAndVerifyHost(type="verify", phase="Parse 4")
+    vir_opt.releaseHost()
+    vir_opt.writeLog2File()
+    LOGGER.info("Product version [%s] finished" %prd)
+    return vir_opt.getResultList()
+
 def HostMigration(org_prd, dest_prd, queue=None):
     """Run command line with non-blocking format
     """
-    pro_ver, virt_type = org_prd.split(".")
-    pro_os, pro_sp, pro_bit = pro_ver.split("-")
-
-    LOGGER.info("Task [%s] starts to run now" %org_prd)
-    host_ip = queue.get(block=True, timeout=2)
-
-    #TODO, this is not secure when all hosts are hanged
-    #the loop running forever!!
-    while not AllStaticFuncs.checkIPAddress(host_ip):
-        LOGGER.debug("Host [%s] is busy" %host_ip)
-        time.sleep(2)
-        queue.put(host_ip)
-        host_ip = queue.get(block=True, timeout=2)
-        LOGGER.debug("Switch another host [%s]" %host_ip)
-    '''
-    LOGGER.debug("Running on host [%s]" %host_ip)
-
-    (return_code, ih_result_buf,
-     start_time, end_time) = _installHost(host_ip,
-                                         os=pro_os.lower(),
-                                         sp=pro_sp.lower(),
-                                         bit=pro_bit)
-    #ih_result_buf = parseOutput(ih_result_buf)
-    result_buf1_all = AllStaticFuncs.genHtmlOutputFormat("Parse 1",
-                                                        return_code,
-                                                        ih_result_buf)
-    LOGGER.debug(result_buf1_all)
-    '''
-    return_code = 0
-    result_buf1_all = ""
-    start_time = datetime.datetime.now()
-    
-    result_buf2_all = ""
-    result_buf2_outline = ""
-    if return_code == 0:
-        return_code, ig_result_buf, _ig_start_time, end_time = _installGuest(host_ip)
-        #Get guest installing info from test result
-
-        ig_sub_result_buf = parseOutput(ig_result_buf)
-        result_buf2_outline = AllStaticFuncs.genHtmlOutputFormat("Parse 2",
-                                                                 return_code,
-                                                                 ig_sub_result_buf)
-        result_buf2_all = AllStaticFuncs.genHtmlOutputFormat("Parse 2",
-                                                             return_code,
-                                                             ig_result_buf)
-        LOGGER.info("OUTPUT:" + ig_result_buf)
-        if return_code != 0:
-            LOGGER.warn("Failed to install guest on host %s" %self.host)
-    else:
-        LOGGER.warn("Failed to reinstall on machine %s" %host_ip)
-
-    queue.put(host_ip)
-    AllStaticFuncs.writeLog2File(task, log, return_code, host_ip,
-                                 result_buf1_all + result_buf2_all,
-                                 end_time-start_time)
-
-    LOGGER.info("Task [%s] finishes now" %task)
-    LOGGER.debug("Task %s sleeps 2 seconds for next running" %task)
-    time.sleep(2)
-    return (task, host_ip, return_code, 
-            result_buf1_all + result_buf2_outline,
-            start_time, end_time, log)
+    vir_opt = VirtOpt(org_prd, queue)
+    LOGGER.info("Product version [%s] starts to run on host [%s] now" %(org_prd, vir_opt.host))
+    vir_opt._installHost()
+    vir_opt._installGuest()
+    vir_opt.releaseHost()
+    vir_opt.writeLog2File()
+    LOGGER.info("Product version [%s] finished" %prd)
+    return vir_opt.getResultList()
 
 class ParseCMDParam(optparse.OptionParser):
     """Class which parses command parameters
@@ -1377,12 +1459,12 @@ class MultipleProcessRun(object):
         if self.test_type == "gi":
             self.host_list = AllStaticFuncs.getAvailHost(options.gi_host_list.split(","))
             self.task_list = options.gi_product_list.strip().split(",")
-            print self.host_list, self.task_list
             self._guestInstall()
         elif self.test_type == "hu":
             self.host_list = AllStaticFuncs.getAvailHost(options.hu_host_list.split(","))
             self.org_prd_list = options.org_product_list.strip().split(",")
             self.upg_prd_list = options.upg_product_list.strip().split(",")
+            self._hostMigrate()
 
 
     def _guestInstall(self):
@@ -1404,10 +1486,31 @@ class MultipleProcessRun(object):
             #GuestInstalling(task, self.queue)
             self.result.append([task,
                                 self.pool.apply_async(
-                                    GuestInstalling,
+                                    installGuest,
                                     (task, self.queue)
                                     )])
+    def _hostMigrate(self):
+        #Pool size is defined through host number.
+        if self.host_list:
+            self.pool = multiprocessing.Pool(processes=len(self.host_list))
+            LOGGER.debug("Create process pool[%d]" %len(self.host_list))
+            self.initialQueue()
+            self._huMultipleTask()
+            self.closeAndJoinPool()
+        else:
+            self.mulpool_status["status"]= 10
+            self.mulpool_status["info"] = "There is no available host"
 
+    def _huMultipleTask(self):
+        """Execute multiple taskes in processes pool only for guest installing
+        """
+        for org_prd, dest_prd in zip(self.org_prd_list, self.upg_prd_list):
+            #GuestInstalling(task, self.queue)
+            self.result.append([org_prd,
+                                self.pool.apply_async(
+                                    migrateHost,
+                                    (org_prd, dest_prd, self.queue)
+                                    )])
     def initialQueue(self):
         """Initial queue, add host name to queue
         """
