@@ -698,18 +698,23 @@ class GuestInstalling(object):
         self.result = []
         self.status = True
         self.timeout_flag = False
+        self.no_host_flag = False
 
         self.feed_hamsta = "/usr/share/hamsta/feed_hamsta.pl"
         self.get_source = "/usr/share/qa/virtautolib/lib/get-source.sh"
 
         self.cmd_getoutput = self.feed_hamsta + " 127.0.0.1 --query_log %s"
         self.cmd_getstatus = self.feed_hamsta + " 127.0.0.1 --query_job %s"
+
         self.cmd_installhost = (self.feed_hamsta + " -t 5 --re_url  %(img_repo)s "
-                                "--re_sdk %(addon_repo)s --pattern kvm_server "
+                                "--re_sdk %(addon_repo)s --pattern %(virttype)s_server "
                                 "-rpms qa_test_virtualization -h %(host)s 127.0.0.1 -w")
+        
         self.cmd_installguest = (self.feed_hamsta + " -x "
                                  "\"%(guest_script)s\" -h %(host)s 127.0.0.1 -w")
         
+        self.cmd_switchxenker = (self.feed_hamsta + " -t1 -n set_xen_default "
+                                 "-h %(host)s 127.0.0.1 -w")
         self.start_time = datetime.datetime.now()
         
         #Get host addr from queue
@@ -740,6 +745,8 @@ class GuestInstalling(object):
             else:
                 if self.timeout_flag:
                     f.write("Status : Timeout" + os.linesep)
+                elif self.no_host_flag:
+                    f.write("Status : No Available Host" + os.linesep)
                 else:
                     f.write("Status : Failed" + os.linesep)
 
@@ -789,6 +796,7 @@ class GuestInstalling(object):
         se_qadb_url = re.search(search_key, case_result, re.I)
         
         if se_qadb_url:
+            print "aaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             return se_qadb_url.group()
         else:
             LOGGER.warn("Failed to get QADB url for test suite, use local suite log")
@@ -857,6 +865,93 @@ class GuestInstalling(object):
         LOGGER.info("Get reporsitory with cmd[%s]" %(cmd_get_repo))
         return runCMDBlocked(cmd_get_repo)
 
+    def _execHamstaJob(self, cmd, timeout, job_sketch, phase, url=False):
+        '''The function is what executes job by hamsta cmd
+        '''
+        if self.status:
+            LOGGER.info("Execute \"%s\" on %s machine" %(job_sketch, self.host))
+            (return_code, hamsta_output,
+             start_time, end_time) = runCMDNonBlocked(cmd, timeout=timeout)
+            #Get qadb link for test suite
+            if url:
+                self.qadb_link = self.getQadbURL(hamsta_output)
+
+            if DEBUG:
+                job_status = "passed"
+            else:
+                job_status = self.getJobStatus(hamsta_output)
+
+            #Analyze hamsta status and job status
+            if return_code == 0:
+                if job_status == "passed":
+                    job_status_code = 0
+                    self.status = True
+                    LOGGER.info("Finished \"%s\" successfully" %(job_sketch))
+                else:
+                    job_status_code = -1
+                    self.status = False
+                    LOGGER.error("Failed to execute \"%s\"" %(job_sketch))
+
+                result_details = self.parseOutput(hamsta_output)
+                return_all = self.parseOutput(hamsta_output, all_scope=True)
+            else:
+                if return_code == 10:
+                    job_status_code = 10
+                    self.timeout_flag = True
+                else:
+                    job_status_code = return_code
+                    self.status = False
+
+                LOGGER.warn("Failed to execute \"%s\" ,cause :[%s]" %(job_sketch, hamsta_output))
+                result_details = hamsta_output
+                return_all = hamsta_output
+
+            LOGGER.info("Finally Output:" + return_all)
+
+            #Format job output            
+            fmt_result_outline = AllStaticFuncs.genHtmlOutputFormat("%s %s" %(phase, job_sketch),
+                                                                    job_status,
+                                                                    result_details)
+            fmt_result_all = AllStaticFuncs.genHtmlOutputFormat("%s %s" %(phase, job_sketch),
+                                                                job_status,
+                                                                return_all)
+            #Collect job infomation
+            result_map = {"job_status":job_status_code,
+                          "job_suboutput":fmt_result_outline,
+                          "job_alloutput":fmt_result_all,
+                          "hamsta_output":hamsta_output,
+                          "hamsta_status":return_code,
+                          "start_time":start_time,
+                          "end_time":end_time}
+            LOGGER.info("Finished \"%s\" on host machine" %(job_sketch))
+            #return (job_status_code, fmt_result_outline, start_time, end_time)
+        else:
+            #Above phase is wrong occasion
+            result_map = {"job_status":None,
+                          "job_suboutput":None,
+                          "job_alloutput":None,
+                          "hamsta_output":None,
+                          "hamsta_status":None,
+                          "start_time":None,
+                          "end_time":None}
+            LOGGER.warn("Last phase failure , skip \"%s\"" %(job_sketch))
+            #return (None,None,None,None)
+        self.result.append(result_map)
+
+    def _switchXenKernel(self, timeout=600):
+        '''#Switch kernel for supporting xen virtualization
+        '''
+        cmd_switch_xen_ker = self.cmd_switchxenker %dict(host=self.host)
+        if DEBUG:
+            cmd_switch_xen_kernel = "./test test"
+            LOGGER.info(("Start to switch xen kernl with cmd[%s] on machine %s"
+                         %(cmd_switch_xen_ker, self.host)))
+
+        self._execHamstaJob(cmd=cmd_switch_xen_ker,
+                            timeout=600,
+                            job_sketch="Switch xen kernel",
+                            phase="Phase1.1")
+
     def _installHost(self, timeout=4800):
         """Function which reinstalling host by hamsta API
         """
@@ -876,12 +971,27 @@ class GuestInstalling(object):
         
         cmd_install_host = (self.cmd_installhost %dict(img_repo=host_img_repo,
                                                        addon_repo=addon_repo,
+                                                       virttype=self.virt_type.lower(),
                                                        host=self.host,))
-        if DEBUG:
-            cmd_install_host = "./test ttsfsafddsa"
-
         LOGGER.info(("Start to install host with cmd[%s] on machine %s"
                      %(cmd_install_host, self.host)))
+        if DEBUG:
+            timeout = 5
+            cmd_install_host = "./test test"
+            LOGGER.info(("Start to install host with cmd[%s] on machine %s"
+                     %(cmd_install_host, self.host)))
+
+        #Install host
+        self._execHamstaJob(cmd=cmd_install_host,
+                            timeout=timeout,
+                            job_sketch="Install host",
+                            phase="Phase1",
+                            url=False)
+        #Switch xen kernel
+        if self.virt_type == "XEN":
+            self._switchXenKernel()
+
+        '''
         (return_code, hamsta_output,
          start_time, end_time) = runCMDNonBlocked(cmd_install_host, timeout=timeout)
         
@@ -925,7 +1035,7 @@ class GuestInstalling(object):
         self.result.append(result_map)
         LOGGER.info("Finished the host installing operation")
         #return (job_status_code, result, start_time, end_time)
-
+        '''
     def _installGuest(self, ig_stript="/usr/share/qa/tools/virt-simple-run", timeout=7200):
         """Function which installing guest by hamsta API
         """
@@ -943,10 +1053,17 @@ class GuestInstalling(object):
             cmd_install_guest = (self.cmd_installguest %dict(guest_script=ig_stript,
                                                              host=self.host))
             if DEBUG:
+                timeout = 5
                 cmd_install_guest = "./test test"
             LOGGER.info(("Start to install guest with cmd[%s] on host %s"
                          %(cmd_install_guest, self.host)))
 
+            self._execHamstaJob(cmd=cmd_install_guest,
+                            timeout=timeout,
+                            job_sketch="Install guest",
+                            phase="Phase2",
+                            url=True)
+            '''
             #Install guest in parallel on host
             (return_code, hamsta_output,
              start_time, end_time) = runCMDNonBlocked(cmd_install_guest, timeout=timeout)
@@ -1014,15 +1131,13 @@ class GuestInstalling(object):
             LOGGER.warn("Host installing failure, skip guest installing")
             #return (None,None,None,None)
         self.result.append(result_map)
-
+        '''
     def getResultList(self):
         '''Parse result infomation, return key elements to process pool
         '''
         job_status = 0
         sub_result = ""
-        start_time = ""
-        end_time = ""
-        start_flag = True
+        end_time = datetime.datetime.now()
         for rel in self.result:
             if rel["job_status"] is not None:
                 job_status = rel["job_status"]
@@ -1030,18 +1145,40 @@ class GuestInstalling(object):
                 sub_result = sub_result + rel["job_suboutput"]
             if rel["end_time"] is not None:
                 end_time = rel["end_time"]
-            if start_flag:
-                continue
-            if rel["start_time"] is not None:
-                start_time = rel["start_time"]
-                start_flag = True
+
 
         return (self.prd, self.host, job_status, sub_result,
-                start_time, end_time, self.logname)
+                self.start_time, end_time, self.qadb_link)
 
-    def reserveHost(self):
+    def reserveHost(self, timeout=7200):
         #TODO, There exists some issue
         #Get available host form process pool
+        now = time.time()
+        while time.time() - now < timeout:
+            if self.queue.qsize() == 0:
+                time.sleep(10)
+            else:
+                self.host = self.queue.get(block=True, timeout=2)
+                if AllStaticFuncs.checkIPAddress(self.host):
+                    LOGGER.info("Reserve host ip [%s]" %self.host)
+                    return
+                else:
+                    self.releaseHost(self.host)
+                    time.sleep(10)
+
+        LOGGER.warn("There is no available host")
+
+        self.status = False
+        self.no_host_flag = True
+        result_map = {"job_status":20,
+                      "job_suboutput":"No Availbale host",
+                      "job_alloutput":None,
+                      "hamsta_output":None,
+                      "hamsta_status":0,
+                      "start_time":None,
+                      "end_time":None}
+        self.result.append(result_map)
+        '''
         self.host = self.queue.get(block=True, timeout=2)
         while not AllStaticFuncs.checkIPAddress(self.host):
             LOGGER.debug("Host [%s] is busy" %self.host)
@@ -1049,6 +1186,7 @@ class GuestInstalling(object):
             self.releaseHost(self.host)
             self.host = self.queue.get(block=True, timeout=2)
             LOGGER.debug("Switch another host [%s]" %self.host)
+        '''
 
     def releaseHost(self):
         '''Return finished host into queue
@@ -1060,9 +1198,10 @@ def installGuest(prd, queue=None,):
     """
     vir_opt = GuestInstalling(prd, queue)
     LOGGER.info("Product version [%s] starts to run on host [%s] now" %(prd, vir_opt.host))
-    vir_opt._installHost()
-    vir_opt._installGuest()
-    vir_opt.releaseHost()
+    if vir_opt.status:
+        vir_opt._installHost()
+        vir_opt._installGuest()
+        vir_opt.releaseHost()
     vir_opt.writeLog2File()
     LOGGER.info("Product version [%s] finished" %prd)
     return vir_opt.getResultList()
@@ -1078,29 +1217,53 @@ class HostMigration(GuestInstalling):
         super(HostMigration, self).__init__(org_prd, queue)
         self.dest_prd = dest_prd
         
-        self.cmd_update_host = (self.feed_hamsta +  "-x "
+        self.cmd_update_host = (self.feed_hamsta +  " -x "
                "\"/usr/share/qa/virtautolib/lib/vh-update.sh -p vhPrepAndUpdate\" "
                "-h %s 127.0.0.1 -w")
-        self.cmd_verify_host = (self.feed_hamsta +  "-x "
+        self.cmd_verify_host = (self.feed_hamsta +  " -x "
                "\"/usr/share/qa/virtautolib/lib/vh-update.sh -p vhUpdatePostVerification\" "
                "-h %s 127.0.0.1 -w")
     
-    def updateAndVerifyHost(self, type="update", phase="Parse 3", timeout=600):
+    def updateHost(self, timeout=600):
         """Function which update host by hamsta API
         """
         if self.status:
             if DEBUG:
                 cmd_hu_host = "./test ttttttttttttttttttttttttttt"
             else:
-                if type == "update":
-                    cmd_hu_host = self.cmd_update_host %(self.host)
-                elif type == "verify":
-                    cmd_hu_host = self.cmd_verify_host %(self.host)
+                cmd_hu_host = self.cmd_update_host %(self.host)
+                    
 
             LOGGER.info("Start to upgrade host with cmd [%s] %s" %(cmd_hu_host, self.host))
             (return_code, hamsta_output,
              start_time, end_time) = runCMDNonBlocked(cmd_hu_host, timeout=timeout)
 
+            self._execHamstaJob(cmd=cmd_hu_host,
+                                timeout=timeout,
+                                job_sketch="Upgrade Host",
+                                phase="Phase3",
+                                url=False)
+
+    def verifyGuest(self, timeout=600):
+        """Function which update host by hamsta API
+        """
+        if self.status:
+            if DEBUG:
+                cmd_hu_host = "./test ttttttttttttttttttttttttttt"
+            else:
+                cmd_hu_host = self.cmd_verify_host %(self.host)
+                    
+
+            LOGGER.info("Start to verify host with cmd [%s] %s" %(cmd_hu_host, self.host))
+            (return_code, hamsta_output,
+             start_time, end_time) = runCMDNonBlocked(cmd_hu_host, timeout=timeout)
+
+            self._execHamstaJob(cmd=cmd_hu_host,
+                                timeout=timeout,
+                                job_sketch="Verify Guest",
+                                phase="Phase4",
+                                url=False)
+            '''
             if DEBUG:
                 job_status = "passed"
             else:
@@ -1157,32 +1320,22 @@ class HostMigration(GuestInstalling):
             LOGGER.warn("Guest installing failure, skip host upgrade")
             #return (None,None,None,None)
         self.result.append(result_map)
+        '''
 
 def migrateHost(org_prd, dest_prd, queue=None,):
     """Run command line with non-blocking format
     """
-    vir_opt = HostMigration(org_prd, queue)
+    vir_opt = HostMigration(org_prd, dest_prd, queue)
     LOGGER.info("Product version [%s] starts to run on host [%s] now" %(org_prd, vir_opt.host))
     #vir_opt._installHost()
     #vir_opt._installGuest()
-    vir_opt.updateAndVerifyHost(type="update", phase="Parse 3")
-    vir_opt.updateAndVerifyHost(type="verify", phase="Parse 4")
+    vir_opt.updateHost()
+    vir_opt.verifyGuest()
     vir_opt.releaseHost()
     vir_opt.writeLog2File()
-    LOGGER.info("Product version [%s] finished" %prd)
+    LOGGER.info("Product version [%s] finished" %org_prd)
     return vir_opt.getResultList()
 
-def HostMigration(org_prd, dest_prd, queue=None):
-    """Run command line with non-blocking format
-    """
-    vir_opt = VirtOpt(org_prd, queue)
-    LOGGER.info("Product version [%s] starts to run on host [%s] now" %(org_prd, vir_opt.host))
-    vir_opt._installHost()
-    vir_opt._installGuest()
-    vir_opt.releaseHost()
-    vir_opt.writeLog2File()
-    LOGGER.info("Product version [%s] finished" %prd)
-    return vir_opt.getResultList()
 
 class ParseCMDParam(optparse.OptionParser):
     """Class which parses command parameters
