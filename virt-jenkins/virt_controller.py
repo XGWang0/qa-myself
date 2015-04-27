@@ -868,63 +868,62 @@ class GuestInstalling(object):
     def _execHamstaJob(self, cmd, timeout, job_sketch, phase, url=False):
         '''The function is what executes job by hamsta cmd
         '''
-        if self.status:
-            LOGGER.info("Execute \"%s\" on %s machine" %(job_sketch, self.host))
-            (return_code, hamsta_output,
-             start_time, end_time) = runCMDNonBlocked(cmd, timeout=timeout)
-            #Get qadb link for test suite
-            if url:
-                self.qadb_link = self.getQadbURL(hamsta_output)
+        LOGGER.info("Execute \"%s\" on %s machine" %(job_sketch, self.host))
+        (return_code, hamsta_output,
+         start_time, end_time) = runCMDNonBlocked(cmd, timeout=timeout)
+        #Get qadb link for test suite
+        if url:
+            self.qadb_link = self.getQadbURL(hamsta_output)
 
-            if DEBUG:
-                job_status = "passed"
+        if DEBUG:
+            job_status = "passed"
+        else:
+            job_status = self.getJobStatus(hamsta_output)
+
+        #Analyze hamsta status and job status
+        if return_code == 0:
+            if job_status == "passed":
+                job_status_code = 0
+                self.status = True
+                LOGGER.info("Finished \"%s\" successfully" %(job_sketch))
             else:
-                job_status = self.getJobStatus(hamsta_output)
+                job_status_code = -1
+                self.status = False
+                LOGGER.error("Failed to execute \"%s\"" %(job_sketch))
 
-            #Analyze hamsta status and job status
-            if return_code == 0:
-                if job_status == "passed":
-                    job_status_code = 0
-                    self.status = True
-                    LOGGER.info("Finished \"%s\" successfully" %(job_sketch))
-                else:
-                    job_status_code = -1
-                    self.status = False
-                    LOGGER.error("Failed to execute \"%s\"" %(job_sketch))
+            result_details = self.parseOutput(hamsta_output)
+            return_all = self.parseOutput(hamsta_output, all_scope=True)
+        else:
+            if return_code == 10:
+                self.timeout_flag = True
+            job_status_code = return_code
+            self.status = False
 
-                result_details = self.parseOutput(hamsta_output)
-                return_all = self.parseOutput(hamsta_output, all_scope=True)
-            else:
-                if return_code == 10:
-                    job_status_code = 10
-                    self.timeout_flag = True
-                else:
-                    job_status_code = return_code
-                    self.status = False
+            LOGGER.warn("Failed to execute \"%s\" ,cause :[%s]" %(job_sketch, hamsta_output))
+            result_details = hamsta_output
+            return_all = hamsta_output
 
-                LOGGER.warn("Failed to execute \"%s\" ,cause :[%s]" %(job_sketch, hamsta_output))
-                result_details = hamsta_output
-                return_all = hamsta_output
+        LOGGER.info("Finally Output:" + return_all)
 
-            LOGGER.info("Finally Output:" + return_all)
-
-            #Format job output            
-            fmt_result_outline = AllStaticFuncs.genHtmlOutputFormat("%s %s" %(phase, job_sketch),
-                                                                    job_status,
-                                                                    result_details)
-            fmt_result_all = AllStaticFuncs.genHtmlOutputFormat("%s %s" %(phase, job_sketch),
+        #Format job output            
+        fmt_result_outline = AllStaticFuncs.genHtmlOutputFormat("%s %s" %(phase, job_sketch),
                                                                 job_status,
-                                                                return_all)
-            #Collect job infomation
-            result_map = {"job_status":job_status_code,
-                          "job_suboutput":fmt_result_outline,
-                          "job_alloutput":fmt_result_all,
-                          "hamsta_output":hamsta_output,
-                          "hamsta_status":return_code,
-                          "start_time":start_time,
-                          "end_time":end_time}
-            LOGGER.info("Finished \"%s\" on host machine" %(job_sketch))
+                                                                result_details)
+        fmt_result_all = AllStaticFuncs.genHtmlOutputFormat("%s %s" %(phase, job_sketch),
+                                                            job_status,
+                                                            return_all)
+        #Collect job infomation
+        result_map = {"job_status":job_status_code,
+                      "job_suboutput":fmt_result_outline,
+                      "job_alloutput":fmt_result_all,
+                      "hamsta_output":hamsta_output,
+                      "hamsta_status":return_code,
+                      "start_time":start_time,
+                      "end_time":end_time}
+        LOGGER.info("Finished \"%s\" on host machine" %(job_sketch))
+        self.result.append(result_map)
             #return (job_status_code, fmt_result_outline, start_time, end_time)
+        '''
         else:
             #Above phase is wrong occasion
             result_map = {"job_status":None,
@@ -936,106 +935,67 @@ class GuestInstalling(object):
                           "end_time":None}
             LOGGER.warn("Last phase failure , skip \"%s\"" %(job_sketch))
             #return (None,None,None,None)
-        self.result.append(result_map)
-
+        #self.result.append(result_map)
+        '''
     def _switchXenKernel(self, timeout=600):
         '''#Switch kernel for supporting xen virtualization
         '''
-        cmd_switch_xen_ker = self.cmd_switchxenker %dict(host=self.host)
-        if DEBUG:
-            cmd_switch_xen_kernel = "./test test"
-            LOGGER.info(("Start to switch xen kernl with cmd[%s] on machine %s"
-                         %(cmd_switch_xen_ker, self.host)))
-
-        self._execHamstaJob(cmd=cmd_switch_xen_ker,
-                            timeout=600,
-                            job_sketch="Switch xen kernel",
-                            phase="Phase1.1")
+        if self.status:
+            cmd_switch_xen_ker = self.cmd_switchxenker %dict(host=self.host)
+            if DEBUG:
+                cmd_switch_xen_kernel = "./test test"
+                LOGGER.info(("Start to switch xen kernl with cmd[%s] on machine %s"
+                             %(cmd_switch_xen_ker, self.host)))
+    
+            self._execHamstaJob(cmd=cmd_switch_xen_ker,
+                                timeout=600,
+                                job_sketch="Switch xen kernel",
+                                phase="Phase1.1")
+        else:
+            LOGGER.warn("Failed to install host, skip xen kernel switching")
 
     def _installHost(self, timeout=4800):
         """Function which reinstalling host by hamsta API
         """
         #Get host install repository 
-        return_code, result_buf = self.getRepoSource()
-
-        if return_code != 0:
-            LOGGER.error("Failed to install host due to :%s" %result_buf)
-            return (return_code, "Cause: " + result_buf,
-                    datetime.datetime.now(), datetime.datetime.now())
+        if self.status:
+            return_code, result_buf = self.getRepoSource()
     
-        host_img_repo = result_buf.strip()
-
-        LOGGER.debug("Repo for installing source [%s]"  %(host_img_repo))
-        #Temorary repo for test, will be remove
-        addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/SLE-11-SP4/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/Tests/SLE_11_SP4/"
+            if return_code != 0:
+                LOGGER.error("Failed to install host due to :%s" %result_buf)
+                return (return_code, "Cause: " + result_buf,
+                        datetime.datetime.now(), datetime.datetime.now())
         
-        cmd_install_host = (self.cmd_installhost %dict(img_repo=host_img_repo,
-                                                       addon_repo=addon_repo,
-                                                       virttype=self.virt_type.lower(),
-                                                       host=self.host,))
-        LOGGER.info(("Start to install host with cmd[%s] on machine %s"
-                     %(cmd_install_host, self.host)))
-        if DEBUG:
-            timeout = 5
-            cmd_install_host = "./test test"
+            host_img_repo = result_buf.strip()
+    
+            LOGGER.debug("Repo for installing source [%s]"  %(host_img_repo))
+            #Temorary repo for test, will be remove
+            addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/SLE-11-SP4/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/Tests/SLE_11_SP4/"
+            
+            cmd_install_host = (self.cmd_installhost %dict(img_repo=host_img_repo,
+                                                           addon_repo=addon_repo,
+                                                           virttype=self.virt_type.lower(),
+                                                           host=self.host,))
             LOGGER.info(("Start to install host with cmd[%s] on machine %s"
-                     %(cmd_install_host, self.host)))
-
-        #Install host
-        self._execHamstaJob(cmd=cmd_install_host,
-                            timeout=timeout,
-                            job_sketch="Install host",
-                            phase="Phase1",
-                            url=False)
-        #Switch xen kernel
-        if self.virt_type == "XEN":
-            self._switchXenKernel()
-
-        '''
-        (return_code, hamsta_output,
-         start_time, end_time) = runCMDNonBlocked(cmd_install_host, timeout=timeout)
-        
-        LOGGER.info("Hamsta output : [%s]" %hamsta_output)
-        result_all = self.parseOutput(hamsta_output, all_scope=True)
-
-        if DEBUG:
-            job_status = "passed"
+                         %(cmd_install_host, self.host)))
+            if DEBUG:
+                timeout = 5
+                cmd_install_host = "./test test"
+                LOGGER.info(("Start to install host with cmd[%s] on machine %s"
+                         %(cmd_install_host, self.host)))
+    
+            #Install host
+            self._execHamstaJob(cmd=cmd_install_host,
+                                timeout=timeout,
+                                job_sketch="Install host",
+                                phase="Phase1",
+                                url=True)
+            #Switch xen kernel
+            if self.virt_type == "XEN":
+                self._switchXenKernel()
         else:
-            job_status = self.getJobStatus(hamsta_output)
+            LOGGER.warn("Failed to reserver host, skip host reinstallation")
 
-        #Analyze hamsta status and job status
-        if return_code == 0:
-            if job_status == "passed":
-                self.status = True
-                job_status_code = 0
-                LOGGER.info("Finished the host installing successfully")
-            else:
-                self.status = False
-                job_status_code = -1
-                LOGGER.error(" Failed to install host, cause :[%s]" %hamsta_output)
-        else:
-            if return_code == 10:
-                job_status_code = 10
-                self.timeout_flag = True
-            else:
-                job_status_code = return_code
-            self.status = False
-            LOGGER.warn("Failed to reinstall on machine %s" %self.host)
-        #Format job output
-        result = AllStaticFuncs.genHtmlOutputFormat("Parse 1",
-                                                    job_status,
-                                                    result_all)
-        result_map = {"job_status":job_status_code,
-                      "job_suboutput":result,
-                      "job_alloutput":result,
-                      "hamsta_output":hamsta_output,
-                      "hamsta_status":return_code,
-                      "start_time":start_time,
-                      "end_time":end_time}
-        self.result.append(result_map)
-        LOGGER.info("Finished the host installing operation")
-        #return (job_status_code, result, start_time, end_time)
-        '''
     def _installGuest(self, ig_stript="/usr/share/qa/tools/virt-simple-run", timeout=7200):
         """Function which installing guest by hamsta API
         """
@@ -1063,75 +1023,9 @@ class GuestInstalling(object):
                             job_sketch="Install guest",
                             phase="Phase2",
                             url=True)
-            '''
-            #Install guest in parallel on host
-            (return_code, hamsta_output,
-             start_time, end_time) = runCMDNonBlocked(cmd_install_guest, timeout=timeout)
-            #Get qadb link for test suite
-            self.qadb_link = self.getQadbURL(hamsta_output)
-
-            if DEBUG:
-                job_status = "passed"
-            else:
-                job_status = self.getJobStatus(hamsta_output)
-
-            #Analyze hamsta status and job status
-            if return_code == 0:
-                if job_status == "passed":
-                    job_status_code = 0
-                    self.status = True
-                    LOGGER.info("Finished installing guest successfully")
-                else:
-                    job_status_code = -1
-                    self.status = False
-                    LOGGER.error("Failed to install guest on host %s" %self.host)
-
-                result_details = self.parseOutput(hamsta_output)
-                return_all = self.parseOutput(hamsta_output, all_scope=True)
-            else:
-                if return_code == 10:
-                    job_status_code = 10
-                    self.timeout_flag = True
-                else:
-                    job_status_code = return_code
-                    self.status = False
-
-                LOGGER.warn("Failed to execute hamsta job ,cause :[%s]" %hamsta_output)
-                result_details = hamsta_output
-                return_all = hamsta_output
-
-            LOGGER.info("OUTPUT:" + return_all)
-
-            #Format job output            
-            fmt_result_outline = AllStaticFuncs.genHtmlOutputFormat("Parse 2",
-                                                                    job_status,
-                                                                    result_details)
-            fmt_result_all = AllStaticFuncs.genHtmlOutputFormat("Parse 2",
-                                                                job_status,
-                                                                return_all)
-            #Collect job infomation
-            result_map = {"job_status":job_status_code,
-                          "job_suboutput":fmt_result_outline,
-                          "job_alloutput":fmt_result_all,
-                          "hamsta_output":hamsta_output,
-                          "hamsta_status":return_code,
-                          "start_time":start_time,
-                          "end_time":end_time}
-            LOGGER.info("Finished installing guest on host machine")
-            #return (job_status_code, fmt_result_outline, start_time, end_time)
         else:
-            #Above phase is wrong occasion
-            result_map = {"job_status":None,
-                          "job_suboutput":None,
-                          "job_alloutput":None,
-                          "hamsta_output":None,
-                          "hamsta_status":None,
-                          "start_time":None,
-                          "end_time":None}
             LOGGER.warn("Host installing failure, skip guest installing")
-            #return (None,None,None,None)
-        self.result.append(result_map)
-        '''
+ 
     def getResultList(self):
         '''Parse result infomation, return key elements to process pool
         '''
@@ -1163,10 +1057,10 @@ class GuestInstalling(object):
                     LOGGER.info("Reserve host ip [%s]" %self.host)
                     return
                 else:
-                    self.releaseHost(self.host)
+                    self.releaseHost()
                     time.sleep(10)
-
-        LOGGER.warn("There is no available host")
+            LOGGER.warn("There is no available host, wait 10s....")
+        LOGGER.warn("There is no available host, exit!!")
 
         self.status = False
         self.no_host_flag = True
@@ -1243,6 +1137,8 @@ class HostMigration(GuestInstalling):
                                 job_sketch="Upgrade Host",
                                 phase="Phase3",
                                 url=False)
+        else:
+            LOGGER.warn("Last phase failure, skip host updating.")
 
     def verifyGuest(self, timeout=600):
         """Function which update host by hamsta API
@@ -1263,64 +1159,8 @@ class HostMigration(GuestInstalling):
                                 job_sketch="Verify Guest",
                                 phase="Phase4",
                                 url=False)
-            '''
-            if DEBUG:
-                job_status = "passed"
-            else:
-                job_status = self.getJobStatus(hamsta_output)
-            if return_code == 0:
-                if job_status == "passed":
-                    job_status_code = 0
-                    self.status = True
-                    LOGGER.info("Finished installing guest successfully")
-                else:
-                    job_status_code = -1
-                    self.status = False
-                    LOGGER.error("Failed to install guest on host %s" %self.host)
-
-                result_details = self.parseOutput(hamsta_output)
-                return_all = self.parseOutput(hamsta_output, all_scope=True)
-            else:
-                if return_code == 10:
-                    job_status_code = 10
-                    self.timeout_flag = True
-                else:
-                    job_status_code = return_code
-                    self.status = False
-
-                LOGGER.warn("Failed to execute hamsta job ,cause :[%s]" %hamsta_output)
-                result_details = hamsta_output
-                return_all = hamsta_output
-
-            LOGGER.info("OUTPUT:" + return_all)
-            fmt_result_outline = AllStaticFuncs.genHtmlOutputFormat(phase,
-                                                                    job_status,
-                                                                    result_details)
-            fmt_result_all = AllStaticFuncs.genHtmlOutputFormat(phase,
-                                                                job_status,
-                                                                return_all)
-
-            result_map = {"job_status":job_status_code,
-                          "job_suboutput":fmt_result_outline,
-                          "job_alloutput":fmt_result_all,
-                          "hamsta_output":hamsta_output,
-                          "hamsta_status":return_code,
-                          "start_time":start_time,
-                          "end_time":end_time}
-            LOGGER.info("Finished host upgrade")
- 
         else:
-            result_map = {"job_status":None,
-                          "job_suboutput":None,
-                          "job_alloutput":None,
-                          "hamsta_output":None,
-                          "hamsta_status":None,
-                          "start_time":None,
-                          "end_time":None}
-            LOGGER.warn("Guest installing failure, skip host upgrade")
-            #return (None,None,None,None)
-        self.result.append(result_map)
-        '''
+            LOGGER.warn("Last phase failure, skip guest verfication.")
 
 def migrateHost(org_prd, dest_prd, queue=None,):
     """Run command line with non-blocking format
