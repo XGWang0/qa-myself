@@ -1,10 +1,12 @@
 #!/usr/bin/python
 """
-Automatically distribute task to host running, add timeout, process
-management and html format log function 
+Automatically distribute task into available host and run guest installing by virt-install,
+after done, generate case log and html report.
+Note: Script combines with jenkins
 """
 
 import datetime
+import json
 import logging
 import multiprocessing
 import os
@@ -218,6 +220,11 @@ h1 {
     margin-bottom: 6ex;
 }
 
+.heading .preset {
+    font-size: 12pt;
+    color: gray;
+}
+
 /* -- css div popup ------------------------------------------------------------------------ */
 a.popup_link {
 }
@@ -269,6 +276,7 @@ a.popup_link:hover {
 .errorCase  { color: #c00; font-weight: bold; }
 .hiddenRow  { display: none; }
 .testcase   { margin-left: 2em; }
+.passrate   { align:left;} 
 
 
 /* -- ending ---------------------------------------------------------------------- */
@@ -287,7 +295,7 @@ a.popup_link:hover {
     HEADING_TMPL = """<div class='heading'>
 <h1>%(title)s</h1>
 %(parameters)s
-<p class='description'>%(description)s</p>
+<p class='description'><strong><pre class='preset'>%(description)s</pre></strong></p>
 </div>
 
 """ # variables: (title, parameters, description)
@@ -309,20 +317,16 @@ a.popup_link:hover {
 </p>
 <table id='result_table'>
 <colgroup>
-<col align='left' />
-<col align='right' />
-<col align='right' />
-<col align='right' />
-<col align='right' />
-<col align='right' />
+<col align='left'  width=25%% />
+<col align='right' width=5%% />
+<col align='right' width=6%% />
+<col align='right' width=5%% />
+<col align='right' width=6%% />
+<col align='center' />
 </colgroup>
 <tr id='header_row'>
-    <td>Test Module</td>
-    <td>Count</td>
-    <td>Pass</td>
-    <td>Fail</td>
-    <td>Timeout</td>
-    <td>View</td>
+    <td colspan='5'>Machines</td>
+    <td>View</td> 
 </tr>
 %(test_list)s
 <tr id='total_row'>
@@ -335,15 +339,18 @@ a.popup_link:hover {
 </tr>
 </table>
 """ # variables: (test_list, count, Pass, fail, error)
-
+    #<td>%(count)s</td>
+    #<td>%(Pass)s</td>
+    #<td>%(fail)s</td>
+    #<td>%(error)s</td>
     REPORT_CLASS_TMPL = r"""
 <tr class='%(style)s'>
     <td>%(desc)s</td>
-    <td>%(count)s</td>
-    <td>%(Pass)s</td>
-    <td>%(fail)s</td>
-    <td>%(error)s</td>
-    <td><a href="javascript:showClassDetail('%(cid)s',%(count)s)">Detail</a></td>
+    <td>TCs </td>
+    <td>Passed </td>
+    <td>Failed </td>
+    <td>Skipped </td>
+    <td align='center'><a href="javascript:showClassDetail('%(cid)s',%(count)s)">Detail</a></td>
 </tr>
 """ # variables: (style, desc, count, Pass, fail, error, cid)
 
@@ -351,7 +358,11 @@ a.popup_link:hover {
     REPORT_TEST_WITH_OUTPUT_TMPL = r"""
 <tr id='%(tid)s' class='%(Class)s'>
     <td class='%(style)s'><div class='testcase'>%(desc)s</div></td>
-    <td colspan='5' align='center'>
+    <td class='none'><div class='passrate'>%(count)s</div></td>
+    <td class='none'><div class='passrate'>%(passed)s</div></td>
+    <td class='none'><div class='passrate'>%(failed)s</div></td>
+    <td class='none'><div class='passrate'>%(skipped)s</div></td>
+    <td align='center'>
 
     <!--css div popup start-->
     <a class="popup_link" onfocus='this.blur();' href="javascript:showTestDetail('div_%(tid)s')" >
@@ -544,9 +555,9 @@ class HTMLTestRunner(Template_mixin):
                 style=ne > 0 and 'errorClass' or nf > 0 and 'failClass' or 'passClass',
                 desc=desc,
                 count=np+nf+ne,
-                Pass=np,
-                fail=nf,
-                error=ne,
+                #Pass=np,
+                #fail=nf,
+                #error=ne,
                 cid='c%s' % (cid+1),
             )
             #print 'style',ne > 0 and 'errorClass' or nf > 0 and 'failClass' or 'passClass'
@@ -558,7 +569,8 @@ class HTMLTestRunner(Template_mixin):
                                            cls_items['tc_output'],
                                            cls_items['tc_errout'],
                                            cls_items['tc_return_code'],
-                                           cls_items['tc_log'])
+                                           cls_items['tc_log'],
+                                           cls_items['tc_subcase_count'])
             '''
             for tid, (n,t,o,e) in enumerate(cls_results):
                 self._generate_report_test(rows, cid, tid, n, t, o, e)
@@ -573,7 +585,7 @@ class HTMLTestRunner(Template_mixin):
         return report
 
 
-    def _generate_report_test(self, rows, cid, tid, n, t, o, e, r, l):
+    def _generate_report_test(self, rows, cid, tid, n, t, o, e, r, l, s):
         # e.g. 'pt1.1', 'ft1.1', etc
         has_output = bool(o or e or r)
         tid = (n == 'passed' and 'p' or 'f') + 't%s.%s' % (cid+1, tid+1)
@@ -607,6 +619,7 @@ class HTMLTestRunner(Template_mixin):
         script = self.REPORT_TEST_OUTPUT_TMPL % dict(
             id=tid,
             output=saxutils.escape(uo+ue+ur),
+            
         )
 
         log = l
@@ -618,7 +631,11 @@ class HTMLTestRunner(Template_mixin):
             script=script,
             log=log,
             #status = self.STATUS[n],
-            status=n
+            status=n,
+            count=sum(s),
+            passed=s[0],
+            failed=s[1],
+            skipped=s[2],
         )
         rows.append(row)
         if not has_output:
@@ -639,9 +656,8 @@ def runCMDBlocked(cmd):
 
     LOGGER.info("Execute cmd :%s" %cmd)
     (r_stdout, r_stderr) = result.communicate(result)
-    #output = "%s\n%s" %(r_stdout, r_stderr)
     return_code = result.returncode
-    LOGGER.info("Returned info :%s" %(r_stdout + r_stderr))
+    #LOGGER.info("Returned info :%s" %(r_stdout + r_stderr))
     return (return_code, r_stdout + r_stderr)
 
 def runCMDNonBlocked(cmd, timeout=5):
@@ -682,21 +698,24 @@ def runCMDNonBlocked(cmd, timeout=5):
     return (return_code, result_buf, start_time, end_time)
 
 class GuestInstalling(object):
+    '''Class representing virt-install test runner
+    '''
 
     def __init__(self, prd, queue):
-
-        #Split product info
+        '''Initial parameters
+        '''
         self.prd = prd
         self.queue = queue
         self.repo_type = "http"
         self.prd_ver, self.virt_type = prd.split(".")
-        #self.prd_os, self.rel_ver, self.prd_sp, self.prd_bit = self.prd_ver.split("-")
+
         self.host = ""
         self.logname = ""
         self.qadb_link = ""
 
         self.result = []
         self.status = True
+        self.subcase_count = [0,0,0]
         self.timeout_flag = False
         self.no_host_flag = False
 
@@ -713,23 +732,24 @@ class GuestInstalling(object):
         self.cmd_installguest = (self.feed_hamsta + " -x "
                                  "\"%(guest_script)s\" -h %(host)s 127.0.0.1 -w")
         
-        self.cmd_switchxenker = (self.feed_hamsta + " -t1 -n set_xen_default "
+        self.cmd_switchxenker = (self.feed_hamsta + " -t 1 -n set_xen_default "
                                  "-h %(host)s 127.0.0.1 -w")
         self.start_time = datetime.datetime.now()
         
-        #Get host addr from queue
+        #Reserve host from queue
         self.reserveHost()
+        #Get absolute log path
         self.getLogName()
 
     def getLogName(self):
-        """Get initial log path
+        """Get absolute log path
         """
         logpath = AllStaticFuncs.getBuildPath()
         LOGGER.debug("Get build log path :%s" %logpath)
         self.logname = os.path.join(logpath, self.prd)
 
     def writeLog2File(self):
-        """Write output info of command line to file
+        """Write  result information to file,
         """
         #LOGGER.debug(("Write log to file , params :[task=%s,returncode=%d,"
         #              "logname=%s,host=%s,content=%s]" %(task, returncode,
@@ -756,69 +776,92 @@ class GuestInstalling(object):
             f.write(os.linesep)
             tmp_result = ""
             for rel in self.result:
-                if rel["job_suboutput"] is not None:
-                    tmp_result = tmp_result + rel["job_suboutput"]
+                if rel["step_suboutput"] is not None:
+                    tmp_result = tmp_result + rel["step_suboutput"]
             f.write("Output : " + os.linesep +
                     ("\t%s" %(tmp_result.replace(os.linesep, os.linesep+"\t"))))
             f.flush()
             f.close()
 
-    def getJobStatus(self, output, search_key="internal id: (\d+)"):
-
-        job_id = 0
-        se_job_id = re.search(search_key, output)
-        if se_job_id:
-            job_id = se_job_id.groups()[0]
-        else:
-            LOGGER.info(output)
-            LOGGER.error("Failed to get job id from hamsta output")
+    def getJobStatus(self, output):
+        '''Get job acutal status through hamsta command :
+        feed_hamsta.pl --query_log jobid 127.0.0.1
+        '''
+        job_id = self.getJobID(output)
+        if job_id == 0:
             return "abnormal"
-        LOGGER.info("Get job id [%s]" %job_id)
         cmd_get_job_status = self.cmd_getstatus %(job_id)
         status_buf= runCMDNonBlocked(cmd_get_job_status, timeout=10)[1]
-        job_status = re.search("stauts : (\S+)", status_buf, ).groups()[0].strip()
+        se_job_status = re.search("stauts : (\S+)", status_buf, )
+        if se_job_status:
+            job_status = se_job_status.groups()[0].strip()
+        else:
+            LOGGER.warn("Failed to get job status from %s" %output)
+            job_status = "failed"
         
         return job_status
 
     def getJobID(self, output, search_key="internal id: (\d+)"):
-        '''Get job id from hamsta output
+        '''Get job id from hamsta output,
+        Search key word "internal id :" and capture the jobid with regular expression
         '''
         se_job_id = re.search(search_key, output)
         if se_job_id:
-            return se_job_id.groups()[0]
+            job_id = se_job_id.groups()[0]
+            LOGGER.info("Job ID is %s" %job_id)
+            return job_id
         else:
+            LOGGER.debug(output)
+            LOGGER.error("Failed to get job id from hamsta output")
             return 0
 
     def getQadbURL(self, output, search_key="http:.*submission_id.*"):
-        '''Get job url of QADB from hamsta output
+        '''Get job url of QADB from job terminal output,
+        1. get hamsta output and capture jobid
+        2. get job terminal output through hamsta cmd "
+           feed_hamsta.pl --query_log jobid 127.0.0.1"
+        3. search keyword "http:.*submission_id.*" to capture url
         '''
         case_result = self.parseOutput(output, all_scope=True)
         se_qadb_url = re.search(search_key, case_result, re.I)
         
         if se_qadb_url:
-            print "aaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            return se_qadb_url.group()
+            qadb_url = se_qadb_url.group()
+            LOGGER.info("QADB url : %s" %qadb_url)
+            return qadb_url
         else:
             LOGGER.warn("Failed to get QADB url for test suite, use local suite log")
             return  os.path.join(AllStaticFuncs.getJobURL(), "ws",
                                  "LOG", os.getenv("BUILD_TAG", ""), self.prd)
 
     def parseOutput(self,
-                     output,
-                     all_scope=False,
-                     search_key="internal id: (\d+)",
-                     start_key="Test in progress",
-                     end_key="Test run complete"):
-    
+                    output,
+                    all_scope=False,
+                    start_key="Test in progress",
+                    end_key="Test run complete"):
+        '''Parse hamsta output and get substr
+        1. get jobid form hamsta output
+        2. get job terminal output through hamsta cmd
+        3. get substr within between keyword "Test in progress"
+        and "Test run complete"
+        '''
+        def _countSubCase(output):
+            '''Get statisitc data for all cases in one job
+            '''
+            keyword_pass = "PASSED"
+            keyword_fail = "FAILED"
+            keyword_skip = "SKIPPED"
+
+            self.subcase_count[0] = len(re.findall(keyword_pass, output, re.I))
+            self.subcase_count[1] = len(re.findall(keyword_fail, output, re.I))
+            self.subcase_count[2] = len(re.findall(keyword_skip, output, re.I))
+            
         output_list = []
-        job_id = 0
         start_key_index = 0
         end_key_index = 0
         #Get job id
-        se_job_id = re.search(search_key, output)
-        if se_job_id:
-            job_id = se_job_id.groups()[0]
-        else:
+        job_id = self.getJobID(output)
+        if job_id == 0:
             return output
     
         if DEBUG:
@@ -845,12 +888,15 @@ class GuestInstalling(object):
             if end_key_index == start_key_index:
                 return case_result
             else:
+                #Remove unneeded string
                 result_details = map(lambda x: re.sub("^.*STDOUT  job *", "", x), 
                                      result_details[start_key_index:end_key_index+1])
-                return "\n".join(result_details)
+                job_result_substr = "\n".join(result_details)
+                _countSubCase(job_result_substr)
+                return job_result_substr
 
     def getRepoSource(self):
-        """FUnction which getting reinstalling repository 
+        """Get repository url (ftp/http) path by local get_source.sh script
         """
         source_prd = "source.%s.%s"%(self.repo_type, self.prd_ver.lower())
 
@@ -858,22 +904,26 @@ class GuestInstalling(object):
             LOGGER.error(("Failed to get repository due to %s does not exist"
                           %prefix_cmd_get_source))
         
-            return (10, "Can not run func [%s] which does not exist !!" %self.get_source)
+            return (20, "Can not run func [%s] which does not exist !!" %self.get_source)
 
         cmd_get_repo =  self.get_source + " -p " + source_prd
 
         LOGGER.info("Get reporsitory with cmd[%s]" %(cmd_get_repo))
         return runCMDBlocked(cmd_get_repo)
 
-    def _execHamstaJob(self, cmd, timeout, job_sketch, phase, url=False):
-        '''The function is what executes job by hamsta cmd
+    def execHamstaJob(self, cmd, timeout, job_sketch,
+                      phase, p_output_flag=False):
+        '''Common function, which executes hamsta cmd to finish:
+        1. collect hamsta output
+        2. collect job terminal output and case substr.
+        3. analyze result and generate job status map, then append to whole list
         '''
         LOGGER.info("Execute \"%s\" on %s machine" %(job_sketch, self.host))
         (return_code, hamsta_output,
          start_time, end_time) = runCMDNonBlocked(cmd, timeout=timeout)
+
         #Get qadb link for test suite
-        if url:
-            self.qadb_link = self.getQadbURL(hamsta_output)
+        self.qadb_link = self.getQadbURL(hamsta_output)
 
         if DEBUG:
             job_status = "passed"
@@ -881,18 +931,27 @@ class GuestInstalling(object):
             job_status = self.getJobStatus(hamsta_output)
 
         #Analyze hamsta status and job status
+        result_details = hamsta_output
+        return_all = hamsta_output
         if return_code == 0:
-            if job_status == "passed":
-                job_status_code = 0
-                self.status = True
-                LOGGER.info("Finished \"%s\" successfully" %(job_sketch))
+            if job_status == "passed" :
+                if self.subcase_count[-1] == 0 and self.subcase_count[1] == 0 :
+                    job_status_code = 0
+                    self.status = True
+                    LOGGER.info("Finished \"%s\" successfully" %(job_sketch))
+                else:
+                    job_status_code = 1
+                    self.status = False
+                    LOGGER.info("Part of cases are failed in \"%s\"" %(job_sketch))
             else:
                 job_status_code = -1
                 self.status = False
                 LOGGER.error("Failed to execute \"%s\"" %(job_sketch))
 
-            result_details = self.parseOutput(hamsta_output)
-            return_all = self.parseOutput(hamsta_output, all_scope=True)
+            if p_output_flag:
+                #Set p_output_flag with True, parse job output info and formating
+                result_details = self.parseOutput(hamsta_output)
+                return_all = self.parseOutput(hamsta_output, all_scope=True)
         else:
             if return_code == 10:
                 self.timeout_flag = True
@@ -900,12 +959,11 @@ class GuestInstalling(object):
             self.status = False
 
             LOGGER.warn("Failed to execute \"%s\" ,cause :[%s]" %(job_sketch, hamsta_output))
-            result_details = hamsta_output
-            return_all = hamsta_output
+
 
         LOGGER.info("Finally Output:" + return_all)
 
-        #Format job output            
+        # standard output            
         fmt_result_outline = AllStaticFuncs.genHtmlOutputFormat("%s %s" %(phase, job_sketch),
                                                                 job_status,
                                                                 result_details)
@@ -913,32 +971,20 @@ class GuestInstalling(object):
                                                             job_status,
                                                             return_all)
         #Collect job infomation
-        result_map = {"job_status":job_status_code,
-                      "job_suboutput":fmt_result_outline,
-                      "job_alloutput":fmt_result_all,
+        result_map = {"step_status":job_status_code,
+                      "step_suboutput":fmt_result_outline,
+                      "step_alloutput":fmt_result_all,
+                      "step_name":job_sketch,
                       "hamsta_output":hamsta_output,
                       "hamsta_status":return_code,
                       "start_time":start_time,
                       "end_time":end_time}
         LOGGER.info("Finished \"%s\" on host machine" %(job_sketch))
         self.result.append(result_map)
-            #return (job_status_code, fmt_result_outline, start_time, end_time)
-        '''
-        else:
-            #Above phase is wrong occasion
-            result_map = {"job_status":None,
-                          "job_suboutput":None,
-                          "job_alloutput":None,
-                          "hamsta_output":None,
-                          "hamsta_status":None,
-                          "start_time":None,
-                          "end_time":None}
-            LOGGER.warn("Last phase failure , skip \"%s\"" %(job_sketch))
-            #return (None,None,None,None)
-        #self.result.append(result_map)
-        '''
+
     def _switchXenKernel(self, timeout=600):
-        '''#Switch kernel for supporting xen virtualization
+        '''Switch xen kernel for supporting xen virtualization ,
+        hamsta cmd : feed_hamsta.pl -t 1 -n set_xen_default -h host
         '''
         if self.status:
             cmd_switch_xen_ker = self.cmd_switchxenker %dict(host=self.host)
@@ -947,7 +993,7 @@ class GuestInstalling(object):
                 LOGGER.info(("Start to switch xen kernl with cmd[%s] on machine %s"
                              %(cmd_switch_xen_ker, self.host)))
     
-            self._execHamstaJob(cmd=cmd_switch_xen_ker,
+            self.execHamstaJob(cmd=cmd_switch_xen_ker,
                                 timeout=600,
                                 job_sketch="Switch xen kernel",
                                 phase="Phase1.1")
@@ -955,7 +1001,11 @@ class GuestInstalling(object):
             LOGGER.warn("Failed to install host, skip xen kernel switching")
 
     def _installHost(self, timeout=4800):
-        """Function which reinstalling host by hamsta API
+        """Reinstall host by hamsta cmd:
+        feed_hamsta.pl -t 5 --re_url  repo -re_sdk sdk --pattern kvm/xen_server
+        -rpms qa_test_virtualization -h host 127.0.0.1 -w
+        
+        if xen type, execute extra switching xen kerenl
         """
         #Get host install repository 
         if self.status:
@@ -969,7 +1019,7 @@ class GuestInstalling(object):
             host_img_repo = result_buf.strip()
     
             LOGGER.debug("Repo for installing source [%s]"  %(host_img_repo))
-            #Temorary repo for test, will be remove
+            #TUDO Temorary repo for test, will be remove
             addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/SLE-11-SP4/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/Tests/SLE_11_SP4/"
             
             cmd_install_host = (self.cmd_installhost %dict(img_repo=host_img_repo,
@@ -985,11 +1035,10 @@ class GuestInstalling(object):
                          %(cmd_install_host, self.host)))
     
             #Install host
-            self._execHamstaJob(cmd=cmd_install_host,
+            self.execHamstaJob(cmd=cmd_install_host,
                                 timeout=timeout,
                                 job_sketch="Install host",
-                                phase="Phase1",
-                                url=True)
+                                phase="Phase1")
             #Switch xen kernel
             if self.virt_type == "XEN":
                 self._switchXenKernel()
@@ -997,7 +1046,7 @@ class GuestInstalling(object):
             LOGGER.warn("Failed to reserver host, skip host reinstallation")
 
     def _installGuest(self, ig_stript="/usr/share/qa/tools/virt-simple-run", timeout=7200):
-        """Function which installing guest by hamsta API
+        """Install guest on host throuht hamsta cmd calls host script
         """
         if self.status:
             #TODO START only for test, will be remove.
@@ -1010,23 +1059,37 @@ class GuestInstalling(object):
             runCMDBlocked(cmd3)
             runCMDBlocked(cmd4)
             #TODO END
-            cmd_install_guest = (self.cmd_installguest %dict(guest_script=ig_stript,
-                                                             host=self.host))
             if DEBUG:
-                timeout = 5
-                cmd_install_guest = "./test test"
+                timeout = 120
+                cmd_install_guest = "./test te111st"
+                #ig_stript = "/tmp/test.sh"
+
+            #cmd_install_guest = (self.cmd_installguest %dict(guest_script=ig_stript,
+            #                                                 host=self.host))
             LOGGER.info(("Start to install guest with cmd[%s] on host %s"
                          %(cmd_install_guest, self.host)))
 
-            self._execHamstaJob(cmd=cmd_install_guest,
+            self.execHamstaJob(cmd=cmd_install_guest,
                             timeout=timeout,
                             job_sketch="Install guest",
                             phase="Phase2",
-                            url=True)
+                            p_output_flag=True)
         else:
             LOGGER.warn("Host installing failure, skip guest installing")
+
+
+    def getResultList(self, prefix_name="Virt Install - Host ",
+                      job_desc="Description of Feature", display_all=False):
+        '''Parse result infomation, return key elements to process pool
+        '''
+        tmp_job_map = {}
+        tmp_job_map["job_host"] = prefix_name + self.host
+        tmp_job_map["info"] = {"job_name":self.prd, "job_step_rel":self.result}
+        tmp_job_map["job_desc"] = job_desc  
+
+        return tmp_job_map
  
-    def getResultList(self):
+    def getResultList1(self, display_all=False):
         '''Parse result infomation, return key elements to process pool
         '''
         job_status = 0
@@ -1040,13 +1103,13 @@ class GuestInstalling(object):
             if rel["end_time"] is not None:
                 end_time = rel["end_time"]
 
-
         return (self.prd, self.host, job_status, sub_result,
-                self.start_time, end_time, self.qadb_link)
+                self.start_time, end_time, self.qadb_link, self.subcase_count)
 
     def reserveHost(self, timeout=7200):
-        #TODO, There exists some issue
-        #Get available host form process pool
+        '''Resrve available host
+        '''
+        #TODO, There are some issue
         now = time.time()
         while time.time() - now < timeout:
             if self.queue.qsize() == 0:
@@ -1064,23 +1127,15 @@ class GuestInstalling(object):
 
         self.status = False
         self.no_host_flag = True
-        result_map = {"job_status":20,
-                      "job_suboutput":"No Availbale host",
-                      "job_alloutput":None,
+        result_map = {"step_status":20,
+                      "step_suboutput":"No Availbale host",
+                      "step_alloutput":None,
+                      "step_name":"Reserve host",
                       "hamsta_output":None,
                       "hamsta_status":0,
                       "start_time":None,
                       "end_time":None}
         self.result.append(result_map)
-        '''
-        self.host = self.queue.get(block=True, timeout=2)
-        while not AllStaticFuncs.checkIPAddress(self.host):
-            LOGGER.debug("Host [%s] is busy" %self.host)
-            time.sleep(2)
-            self.releaseHost(self.host)
-            self.host = self.queue.get(block=True, timeout=2)
-            LOGGER.debug("Switch another host [%s]" %self.host)
-        '''
 
     def releaseHost(self):
         '''Return finished host into queue
@@ -1088,7 +1143,7 @@ class GuestInstalling(object):
         self.queue.put(self.host)
 
 def installGuest(prd, queue=None,):
-    """Run command line with non-blocking format
+    """External function to warp gest installing functions
     """
     vir_opt = GuestInstalling(prd, queue)
     LOGGER.info("Product version [%s] starts to run on host [%s] now" %(prd, vir_opt.host))
@@ -1098,7 +1153,15 @@ def installGuest(prd, queue=None,):
         vir_opt.releaseHost()
     vir_opt.writeLog2File()
     LOGGER.info("Product version [%s] finished" %prd)
-    return vir_opt.getResultList()
+    return vir_opt.getResultList(
+                job_desc=("Target : The virt-install guest installing test."
+                          " (Support xen & kvm type virtualization)\n"
+                          "\tFunctions:\n"
+                          "\t\t1.   Install host server remotely by HAMSTA.\n"
+                          "\t\t2.   Install needed packages of virtualizaiton test.\n"
+                          "\t\t2-1. Switch xen/kvm kernel\n"
+                          "\t\t3.   Install guests in parallel on host server.\n"
+                          "\t\t4.   Verify the installing result."))
     #return (prd, vir_opt.host, return_code, 
     #        result, start_time, end_time, vir_opt.logname)
 
@@ -1112,53 +1175,76 @@ class HostMigration(GuestInstalling):
         self.dest_prd = dest_prd
         
         self.cmd_update_host = (self.feed_hamsta +  " -x "
-               "\"/usr/share/qa/virtautolib/lib/vh-update.sh -p vhPrepAndUpdate\" "
-               "-h %s 127.0.0.1 -w")
+               "\"/usr/share/qa/virtautolib/lib/vh-update.sh -p vhPrepAndUpdate "
+               "-t %(virt_type)s -m %(org_prd)s -n %(dest_prd)s \" -h %(host)s 127.0.0.1 -w")
         self.cmd_verify_host = (self.feed_hamsta +  " -x "
-               "\"/usr/share/qa/virtautolib/lib/vh-update.sh -p vhUpdatePostVerification\" "
-               "-h %s 127.0.0.1 -w")
-    
-    def updateHost(self, timeout=600):
+               "\"/usr/share/qa/virtautolib/lib/vh-update.sh -p vhUpdatePostVerification "
+               "-t %(virt_type)s -m %(org_prd)s -n %(dest_prd)s \" -h %(host)s 127.0.0.1 -w")
+        self.cmd_reboot_host = (self.feed_hamsta +  " -t 1 -n reboot -h %(host)s "
+                                "127.0.0.1 -w")
+
+    def rebootHost(self, timeout=600):
+        '''Reboot host by hamsta cmd
+        '''
+        if self.status:
+            cmd_rb_host = self.cmd_reboot_host %dict(host=self.host,)
+            LOGGER.info("Start to reboot host with cmd [%s]  for %s" %(cmd_rb_host, self.host))
+            (return_code, hamsta_output,
+             start_time, end_time) = runCMDNonBlocked(cmd_rb_host, timeout=timeout)
+
+            self.execHamstaJob(cmd=cmd_rb_host,
+                                timeout=timeout,
+                                job_sketch="Reboot Host",
+                                phase="Phase4")
+        else:
+            LOGGER.warn("Last phase failure, skip rebooting host.")
+
+    def updateHost(self, timeout=3600):
         """Function which update host by hamsta API
         """
         if self.status:
             if DEBUG:
                 cmd_hu_host = "./test ttttttttttttttttttttttttttt"
             else:
-                cmd_hu_host = self.cmd_update_host %(self.host)
+                cmd_hu_host = self.cmd_update_host %dict(
+                    host=self.host,
+                    virt_type=self.virt_type.lower(),
+                    org_prd=self.prd_ver.lower(),
+                    dest_prd=self.dest_prd.lower())
                     
 
             LOGGER.info("Start to upgrade host with cmd [%s] %s" %(cmd_hu_host, self.host))
             (return_code, hamsta_output,
              start_time, end_time) = runCMDNonBlocked(cmd_hu_host, timeout=timeout)
 
-            self._execHamstaJob(cmd=cmd_hu_host,
+            self.execHamstaJob(cmd=cmd_hu_host,
                                 timeout=timeout,
                                 job_sketch="Upgrade Host",
-                                phase="Phase3",
-                                url=False)
+                                phase="Phase3")
         else:
             LOGGER.warn("Last phase failure, skip host updating.")
 
-    def verifyGuest(self, timeout=600):
+    def verifyGuest(self, timeout=1000):
         """Function which update host by hamsta API
         """
         if self.status:
             if DEBUG:
                 cmd_hu_host = "./test ttttttttttttttttttttttttttt"
             else:
-                cmd_hu_host = self.cmd_verify_host %(self.host)
+                cmd_hu_host = self.cmd_verify_host %dict(host=self.host,
+                                                         virt_type=self.virt_type,
+                                                         org_prd=self.prd_ver.lower(),
+                                                         dest_prd=self.dest_prd.lower())
                     
 
             LOGGER.info("Start to verify host with cmd [%s] %s" %(cmd_hu_host, self.host))
             (return_code, hamsta_output,
              start_time, end_time) = runCMDNonBlocked(cmd_hu_host, timeout=timeout)
 
-            self._execHamstaJob(cmd=cmd_hu_host,
+            self.execHamstaJob(cmd=cmd_hu_host,
                                 timeout=timeout,
                                 job_sketch="Verify Guest",
-                                phase="Phase4",
-                                url=False)
+                                phase="Phase5")
         else:
             LOGGER.warn("Last phase failure, skip guest verfication.")
 
@@ -1170,6 +1256,7 @@ def migrateHost(org_prd, dest_prd, queue=None,):
     #vir_opt._installHost()
     #vir_opt._installGuest()
     vir_opt.updateHost()
+    vir_opt.rebootHost()
     vir_opt.verifyGuest()
     vir_opt.releaseHost()
     vir_opt.writeLog2File()
@@ -1421,15 +1508,73 @@ class AllStaticFuncs(object):
             LOGGER.error("Log folder/file does not exist")
 
     @staticmethod
+    def cleanJosnFIle():
+        '''Rmove file content
+        '''
+        file_path = os.path.join(os.getenv("WORKSPACE", os.getcwd()),
+                                     'result.json')
+        with open(file_path, "w+") as f:
+            f.truncate()
+
+    @staticmethod
+    def convertJosn(result, gen_file=True):
+        josn_result = []
+        for ts_result in result:
+            ts_map = {}
+            ts_map["keyword"] = "Feature"
+            ts_map["name"] = ts_result["job_host"]
+            ts_map["uri"] = ts_result["job_host"]
+            ts_map["description"] = ts_result["job_desc"]
+            tc_element = []
+        
+            for tc_res in ts_result["job_rel"]:
+                tc_map = {}
+                tc_step = []
+                tc_map["keyword"] = "Scenario"
+                tc_map["type"] = "scenario"
+                tc_map["name"] = tc_res["job_name"]
+        
+        
+                for step_i, step in enumerate(tc_res["job_step_rel"]):
+                    tc_step_map = {}
+                    tc_step_map["keyword"] = "STEP %d" %(step_i + 1)
+                    tc_step_map["name"] = step["step_name"]
+                    tc_step_result = {}
+                    if step["step_status"] == 0:
+                        tc_step_result["status"] = "passed"
+                    else:
+                        tc_step_result["status"] = "failed"
+                        tc_step_result["error_message"] = step["step_alloutput"]
+                        
+                    tc_step_result["duration"] = \
+                    (step["end_time"] - step["start_time"]).microseconds * pow(10,5)
+                    tc_step_map["result"] = tc_step_result
+                
+                    tc_step.append(tc_step_map)
+                    
+                tc_map["steps"] = tc_step
+                tc_element.append(tc_map)
+            ts_map["elements"] = tc_element
+            josn_result.append(ts_map)
+        josn_str = json.dumps(josn_result, sort_keys = True, indent = 4, )
+        if gen_file is True:
+            file_path = os.path.join(os.getenv("WORKSPACE", os.getcwd()),
+                                     'result.json')
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            with open(file_path, "w+") as f:
+                f.write(josn_str)
+        else:
+            return josn_str
+
+    @staticmethod
     def genHtmlOutputFormat(phase="", status="passed", output =""):
         tmp_whole_info = ""
-        tmp_whole_info = ("%(phase)s :\n"
-                          "\tStatus:\n"
+        tmp_whole_info = ("\tStatus:\n"
                           "\t\t%(status)s\n"
                           "\tOutput:\n"
                           "\t\t%(output)s\n" 
-                          %dict(phase=phase,
-                                status=status,
+                          %dict(status=status,
                                 output=output.replace(os.linesep,
                                                       os.linesep+"\t\t")))
         return tmp_whole_info
@@ -1443,7 +1588,7 @@ class MultipleProcessRun(object):
         """
         self.result = []
         self.all_result = []
-        self.mulpool_status = dict(status=0, info="")
+        self.prj_status = dict(status=True, info="")
         self.queue = multiprocessing.Manager().Queue()
         #self.logpath = AllStaticFuncs.getBuildPath()
         #LOGGER.debug("Get build log path :%s" % self.logpath)
@@ -1469,19 +1614,20 @@ class MultipleProcessRun(object):
             self._giMultipleTask()
             self.closeAndJoinPool()
         else:
-            self.mulpool_status["status"]= 10
-            self.mulpool_status["info"] = "There is no available host"
+            self.prj_status["status"]= False
+            self.prj_status["info"] = "There is no available host"
 
     def _giMultipleTask(self):
         """Execute multiple taskes in processes pool only for guest installing
         """
         for task in self.task_list:
-            #GuestInstalling(task, self.queue)
+            #installGuest(task, self.queue)
             self.result.append([task,
                                 self.pool.apply_async(
                                     installGuest,
                                     (task, self.queue)
                                     )])
+
     def _hostMigrate(self):
         #Pool size is defined through host number.
         if self.host_list:
@@ -1491,8 +1637,8 @@ class MultipleProcessRun(object):
             self._huMultipleTask()
             self.closeAndJoinPool()
         else:
-            self.mulpool_status["status"]= 10
-            self.mulpool_status["info"] = "There is no available host"
+            self.prj_status["status"]= False
+            self.prj_status["info"] = "There is no available host"
 
     def _huMultipleTask(self):
         """Execute multiple taskes in processes pool only for guest installing
@@ -1522,12 +1668,39 @@ class MultipleProcessRun(object):
         self.pool.close()
         self.pool.join()
 
-    def getResult(self):
-        """Return processes result
-        """
-        return self.result
 
     def getResultMap(self):
+        """Display result
+        """
+        LOGGER.info("Get all processes infomation")
+        tmp_prj_result = []
+        for res in self.result:
+            #print res[1]
+            #if res[1].successful():
+            tmp_map = {}
+            tc_result = res[1].get()
+            if tmp_prj_result:
+                for job_n, job_map in enumerate(tmp_prj_result):
+                    if tc_result["job_host"] in job_map["job_host"]:
+                        tmp_prj_result[job_n]["job_rel"].append(tc_result["info"])
+                        print tmp_prj_result,"sdfdsafrefdafdsf"
+                        break
+                    else:
+                        if job_n == len(tmp_prj_result) - 1:
+                            tmp_map["job_desc"] = tc_result["job_desc"]
+                            tmp_map["job_host"] = tc_result["job_host"]
+                            tmp_map["job_rel"] = [tc_result["info"]]
+                            tmp_prj_result.append(tmp_map)
+                            break
+
+            else:
+                tmp_map["job_desc"] = tc_result["job_desc"]
+                tmp_map["job_host"] = tc_result["job_host"]
+                tmp_map["job_rel"] = [tc_result["info"]]
+                tmp_prj_result.append(tmp_map)
+        return tmp_prj_result
+
+    def getResultMap1(self):
         """Display result
         """
         LOGGER.info("Get all processes infomation")
@@ -1541,15 +1714,25 @@ class MultipleProcessRun(object):
 
             if tm_tc_map["tc_return_code"] == 0:
                 tm_tc_map["tc_status"] = "Passed"
-            elif tm_tc_map["tc_return_code"] == 10:
-                tm_tc_map["tc_status"] = "Timeout"
+                if tc_result[-1][-1] > 0 or tc_result[-1][1] > 0:
+                    self.prj_status["status"] = False
+                    self.prj_status["info"] = "Part of cases are wrong."
+                else:
+                    self.prj_status["status"] &= True
             else:
-                tm_tc_map["tc_status"] = "Failed"
+                if tm_tc_map["tc_return_code"] == 10:
+                    tm_tc_map["tc_status"] = "Timeout"
+                else:
+                    tm_tc_map["tc_status"] = "Failed"
+                self.prj_status["status"] = False
+                self.prj_status["info"] = "Final resut is failed."
+
             tm_tc_map["tc_output"] = tc_result[3]
             tm_tc_map["tc_host"] = tc_result[1]
             tm_tc_map["tc_errout"] = ""
             tm_tc_map["tc_id"] = tc_result[0]
-            tm_tc_map["tc_log"] = tc_result[-1]
+            tm_tc_map["tc_log"] = tc_result[-2]
+            tm_tc_map["tc_subcase_count"] = tc_result[-1]
 
             if filter(lambda x: x[0] == tm_tc_map["tc_host"], self.all_result):
                 for mode_item in self.all_result:
@@ -1558,11 +1741,11 @@ class MultipleProcessRun(object):
                         break
             else:
                 self.all_result.append([tm_tc_map["tc_host"], [tm_tc_map]])
-        print self.all_result
+        #print self.all_result
         return self.all_result
 
     def getMulPoolStatus(self):
-        return self.mulpool_status
+        return self.prj_status
 
 class LoggerHandling(object):
     """Class which support to add five kind of level info to file
@@ -1611,6 +1794,9 @@ class LoggerHandling(object):
 def main():
     """Main function
     """
+    
+    #Initial environment
+    AllStaticFuncs.cleanJosnFIle()
     #Parse commandline parameters
     start_time = datetime.datetime.now()
 
@@ -1618,35 +1804,41 @@ def main():
     options, _args = param_opt.parse_args()
 
     #Inject empty value to environment variable of jenkins
-    AllStaticFuncs.genEnv2File("")
+    #AllStaticFuncs.genEnv2File("")
 
     #Instance for multiple process
     mpr = MultipleProcessRun(options)
-    if mpr.getMulPoolStatus()["status"] == 0:
-        tcmap=mpr.getResultMap()
-        AllStaticFuncs.warp_generate_html_report(
-            tcmap=tcmap,
-            htmllogname = os.getenv("BUILD_TAG", "Test_Report") + ".html",
-            desc=("Automation test tool is only for installing guest"
-                  " on remote server.\n\tFunctions:\n"
-                  "\t\t1. Install host server remotely.\n"
-                  "\t\t2. Install needed packages of virtualizaiton test\n"
-                  "\t\t3. Install guests in parallel on host server\n"
-                  "\t\t4. Verify the installing result."),
-            start_time=start_time)
-        AllStaticFuncs.compressFile(AllStaticFuncs.getBuildPath())
-        AllStaticFuncs.inputResult2EnvFile(tcmap)
+
+    tcmap=mpr.getResultMap()
+    '''
+    print "--------------------------------------------"
+    import pprint
+    pprint.pprint(tcmap)    
+    AllStaticFuncs.warp_generate_html_report(
+        tcmap=tcmap,
+        htmllogname = os.getenv("BUILD_TAG", "Test_Report") + ".html",
+        desc=("Target : The virt-install guest installing test.\n"
+              "\tFunctions:\n"
+              "\t\t1. Install host server remotely by HAMSTA.\n"
+              "\t\t2. Install needed packages of virtualizaiton test.\n"
+              "\t\t3. Install guests in parallel on host server.\n"
+              "\t\t4. Verify the installing result."),
+        start_time=start_time)
+    '''
+    AllStaticFuncs.convertJosn(tcmap)
+    AllStaticFuncs.compressFile(AllStaticFuncs.getBuildPath())
+    #AllStaticFuncs.inputResult2EnvFile(tcmap)
+    if mpr.getMulPoolStatus()["status"] is True:
         exit_code = 0
     else:
-        AllStaticFuncs.genEnv2File(mpr.getMulPoolStatus()["info"])
+        #AllStaticFuncs.genEnv2File(mpr.getMulPoolStatus()["info"])
         LOGGER.warn(mpr.getMulPoolStatus()["info"])
         exit_code = 5
-    LOGGER.info("End")
     sys.exit(exit_code)
 
 
-DEBUG = False
-#DEBUG = True
+#DEBUG = False
+DEBUG = True
 LOGGER = LoggerHandling(os.path.join(AllStaticFuncs.getBuildPath(), "sys.log"))
 
 if __name__ == "__main__":
