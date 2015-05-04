@@ -776,8 +776,8 @@ class GuestInstalling(object):
             f.write(os.linesep)
             tmp_result = ""
             for rel in self.result:
-                if rel["step_suboutput"] is not None:
-                    tmp_result = tmp_result + rel["step_suboutput"]
+                if rel["step_alloutput"] is not None:
+                    tmp_result = tmp_result + rel["step_alloutput"]
             f.write("Output : " + os.linesep +
                     ("\t%s" %(tmp_result.replace(os.linesep, os.linesep+"\t"))))
             f.flush()
@@ -831,6 +831,8 @@ class GuestInstalling(object):
             return qadb_url
         else:
             LOGGER.warn("Failed to get QADB url for test suite, use local suite log")
+            #TODO, need to discuss for the return value
+            return ""
             return  os.path.join(AllStaticFuncs.getJobURL(), "ws",
                                  "LOG", os.getenv("BUILD_TAG", ""), self.prd)
 
@@ -912,7 +914,7 @@ class GuestInstalling(object):
         return runCMDBlocked(cmd_get_repo)
 
     def execHamstaJob(self, cmd, timeout, job_sketch,
-                      phase, p_output_flag=False):
+                      phase, p_output_flag=False, get_qadb_url=False):
         '''Common function, which executes hamsta cmd to finish:
         1. collect hamsta output
         2. collect job terminal output and case substr.
@@ -923,7 +925,8 @@ class GuestInstalling(object):
          start_time, end_time) = runCMDNonBlocked(cmd, timeout=timeout)
 
         #Get qadb link for test suite
-        self.qadb_link = self.getQadbURL(hamsta_output)
+        if get_qadb_url:
+            self.qadb_link = self.getQadbURL(hamsta_output)
 
         if DEBUG:
             job_status = "passed"
@@ -949,7 +952,7 @@ class GuestInstalling(object):
                 LOGGER.error("Failed to execute \"%s\"" %(job_sketch))
 
             if p_output_flag:
-                #Set p_output_flag with True, parse job output info and formating
+                #If p_output_flag is set as True, parse job output info and format it
                 result_details = self.parseOutput(hamsta_output)
                 return_all = self.parseOutput(hamsta_output, all_scope=True)
         else:
@@ -958,27 +961,31 @@ class GuestInstalling(object):
             job_status_code = return_code
             self.status = False
 
-            LOGGER.warn("Failed to execute \"%s\" ,cause :[%s]" %(job_sketch, hamsta_output))
+            LOGGER.error("Failed to execute \"%s\" ,cause :[%s]" %(job_sketch, hamsta_output))
 
 
         LOGGER.info("Finally Output:" + return_all)
 
         # standard output            
-        fmt_result_outline = AllStaticFuncs.genHtmlOutputFormat("%s %s" %(phase, job_sketch),
-                                                                job_status,
-                                                                result_details)
-        fmt_result_all = AllStaticFuncs.genHtmlOutputFormat("%s %s" %(phase, job_sketch),
-                                                            job_status,
-                                                            return_all)
+        fmt_result_outline = AllStaticFuncs.genStandardOutout("%s %s" %(phase, job_sketch),
+                                                              job_status,
+                                                              result_details)
+        fmt_result_all = AllStaticFuncs.genStandardOutout("%s %s" %(phase, job_sketch),
+                                                          job_status,
+                                                          return_all,
+                                                          display_phase=True)
         #Collect job infomation
         result_map = {"step_status":job_status_code,
                       "step_suboutput":fmt_result_outline,
                       "step_alloutput":fmt_result_all,
+                      "doc_str_flag":p_output_flag,
+                      "step_qadb_url":self.qadb_link,
                       "step_name":job_sketch,
                       "hamsta_output":hamsta_output,
                       "hamsta_status":return_code,
                       "start_time":start_time,
-                      "end_time":end_time}
+                      "end_time":end_time
+                      }
         LOGGER.info("Finished \"%s\" on host machine" %(job_sketch))
         self.result.append(result_map)
 
@@ -994,13 +1001,14 @@ class GuestInstalling(object):
                              %(cmd_switch_xen_ker, self.host)))
     
             self.execHamstaJob(cmd=cmd_switch_xen_ker,
-                                timeout=600,
-                                job_sketch="Switch xen kernel",
-                                phase="Phase1.1")
+                               timeout=600,
+                               job_sketch="Switch xen kernel",
+                               phase="Phase1.1")
         else:
-            LOGGER.warn("Failed to install host, skip xen kernel switching")
+            LOGGER.error("Failed to install host, skip xen kernel switching")
 
-    def _installHost(self, timeout=4800):
+    def _installHost(self, addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/SLE-11-SP4/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/Tests/SLE_11_SP4/",
+                     timeout=4800):
         """Reinstall host by hamsta cmd:
         feed_hamsta.pl -t 5 --re_url  repo -re_sdk sdk --pattern kvm/xen_server
         -rpms qa_test_virtualization -h host 127.0.0.1 -w
@@ -1020,7 +1028,7 @@ class GuestInstalling(object):
     
             LOGGER.debug("Repo for installing source [%s]"  %(host_img_repo))
             #TUDO Temorary repo for test, will be remove
-            addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/SLE-11-SP4/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/Tests/SLE_11_SP4/"
+            #addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/SLE-11-SP4/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/Tests/SLE_11_SP4/"
             
             cmd_install_host = (self.cmd_installhost %dict(img_repo=host_img_repo,
                                                            addon_repo=addon_repo,
@@ -1036,9 +1044,9 @@ class GuestInstalling(object):
     
             #Install host
             self.execHamstaJob(cmd=cmd_install_host,
-                                timeout=timeout,
-                                job_sketch="Install host",
-                                phase="Phase1")
+                               timeout=timeout,
+                               job_sketch="Install host",
+                               phase="Phase1")
             #Switch xen kernel
             if self.virt_type == "XEN":
                 self._switchXenKernel()
@@ -1063,17 +1071,18 @@ class GuestInstalling(object):
                 timeout = 120
                 cmd_install_guest = "./test te111st"
                 #ig_stript = "/tmp/test.sh"
-
-            #cmd_install_guest = (self.cmd_installguest %dict(guest_script=ig_stript,
-            #                                                 host=self.host))
+            else:
+                cmd_install_guest = (self.cmd_installguest %dict(guest_script=ig_stript,
+                                                                 host=self.host))
             LOGGER.info(("Start to install guest with cmd[%s] on host %s"
                          %(cmd_install_guest, self.host)))
 
             self.execHamstaJob(cmd=cmd_install_guest,
-                            timeout=timeout,
-                            job_sketch="Install guest",
-                            phase="Phase2",
-                            p_output_flag=True)
+                               timeout=timeout,
+                               job_sketch="Install guest",
+                               phase="Phase2",
+                               p_output_flag=True,
+                               get_qadb_url=True)
         else:
             LOGGER.warn("Host installing failure, skip guest installing")
 
@@ -1110,10 +1119,12 @@ class GuestInstalling(object):
         '''Resrve available host
         '''
         #TODO, There are some issue
+        LOGGER.info("Start to reserve host")
         now = time.time()
         while time.time() - now < timeout:
             if self.queue.qsize() == 0:
-                time.sleep(10)
+                LOGGER.warn("There is no available host in queue")
+                time.sleep(20)
             else:
                 self.host = self.queue.get(block=True, timeout=2)
                 if AllStaticFuncs.checkIPAddress(self.host):
@@ -1121,15 +1132,17 @@ class GuestInstalling(object):
                     return
                 else:
                     self.releaseHost()
-                    time.sleep(10)
-            LOGGER.warn("There is no available host, wait 10s....")
-        LOGGER.warn("There is no available host, exit!!")
+                    time.sleep(20)
+                LOGGER.warn("There is no available host, wait 10s....")
+        LOGGER.error("There is no available host, exit!!")
 
         self.status = False
         self.no_host_flag = True
         result_map = {"step_status":20,
                       "step_suboutput":"No Availbale host",
-                      "step_alloutput":None,
+                      "step_alloutput":"No Availbale host",
+                      "doc_str_flag":True,
+                      "step_qadb_url":self.qadb_link,
                       "step_name":"Reserve host",
                       "hamsta_output":None,
                       "hamsta_status":0,
@@ -1199,7 +1212,7 @@ class HostMigration(GuestInstalling):
         else:
             LOGGER.warn("Last phase failure, skip rebooting host.")
 
-    def updateHost(self, timeout=3600):
+    def updateHost(self, timeout=7200):
         """Function which update host by hamsta API
         """
         if self.status:
@@ -1214,17 +1227,15 @@ class HostMigration(GuestInstalling):
                     
 
             LOGGER.info("Start to upgrade host with cmd [%s] %s" %(cmd_hu_host, self.host))
-            (return_code, hamsta_output,
-             start_time, end_time) = runCMDNonBlocked(cmd_hu_host, timeout=timeout)
-
             self.execHamstaJob(cmd=cmd_hu_host,
                                 timeout=timeout,
                                 job_sketch="Upgrade Host",
-                                phase="Phase3")
+                                phase="Phase3",
+                                p_output_flag=True)
         else:
             LOGGER.warn("Last phase failure, skip host updating.")
 
-    def verifyGuest(self, timeout=1000):
+    def verifyGuest(self, timeout=2000):
         """Function which update host by hamsta API
         """
         if self.status:
@@ -1235,16 +1246,14 @@ class HostMigration(GuestInstalling):
                                                          virt_type=self.virt_type,
                                                          org_prd=self.prd_ver.lower(),
                                                          dest_prd=self.dest_prd.lower())
-                    
 
             LOGGER.info("Start to verify host with cmd [%s] %s" %(cmd_hu_host, self.host))
-            (return_code, hamsta_output,
-             start_time, end_time) = runCMDNonBlocked(cmd_hu_host, timeout=timeout)
 
             self.execHamstaJob(cmd=cmd_hu_host,
                                 timeout=timeout,
                                 job_sketch="Verify Guest",
-                                phase="Phase5")
+                                phase="Phase5",
+                                p_output_flag=True)
         else:
             LOGGER.warn("Last phase failure, skip guest verfication.")
 
@@ -1253,8 +1262,7 @@ def migrateHost(org_prd, dest_prd, queue=None,):
     """
     vir_opt = HostMigration(org_prd, dest_prd, queue)
     LOGGER.info("Product version [%s] starts to run on host [%s] now" %(org_prd, vir_opt.host))
-    #vir_opt._installHost()
-    #vir_opt._installGuest()
+    #vir_opt._installHost(addon_repo = "http://download.suse.de/ibs/home:/xlai/SLE_11_SP3/,http://download.suse.de/ibs/Devel:/Virt:/SLE-11-SP4/SLE_11_SP4,http://download.suse.de/ibs/Devel:/Virt:/Tests/SLE_11_SP4/")
     vir_opt.updateHost()
     vir_opt.rebootHost()
     vir_opt.verifyGuest()
@@ -1538,16 +1546,25 @@ class AllStaticFuncs(object):
                 for step_i, step in enumerate(tc_res["job_step_rel"]):
                     tc_step_map = {}
                     tc_step_map["keyword"] = "STEP %d" %(step_i + 1)
-                    tc_step_map["name"] = step["step_name"]
+                    if step["step_qadb_url"]:
+                        tc_step_map["name"] = (step["step_name"] + 
+                                               "<a href=%s>QADB URL</a>"
+                                               %step["step_qadb_url"])
+                    else:
+                        tc_step_map["name"] = step["step_name"]
+
                     tc_step_result = {}
                     if step["step_status"] == 0:
                         tc_step_result["status"] = "passed"
+                        if step["doc_str_flag"]:
+                            tc_step_map["doc_string"] = {"value":step["step_suboutput"]}
                     else:
                         tc_step_result["status"] = "failed"
-                        tc_step_result["error_message"] = step["step_alloutput"]
-                        
+                        tc_step_result["error_message"] = step["step_suboutput"]
+
+                    delta_time = step["end_time"] - step["start_time"]
                     tc_step_result["duration"] = \
-                    (step["end_time"] - step["start_time"]).microseconds * pow(10,5)
+                        delta_time.seconds * pow(10,8) + delta_time.microseconds
                     tc_step_map["result"] = tc_step_result
                 
                     tc_step.append(tc_step_map)
@@ -1568,15 +1585,23 @@ class AllStaticFuncs(object):
             return josn_str
 
     @staticmethod
-    def genHtmlOutputFormat(phase="", status="passed", output =""):
-        tmp_whole_info = ""
-        tmp_whole_info = ("\tStatus:\n"
-                          "\t\t%(status)s\n"
-                          "\tOutput:\n"
-                          "\t\t%(output)s\n" 
-                          %dict(status=status,
-                                output=output.replace(os.linesep,
-                                                      os.linesep+"\t\t")))
+    def genStandardOutout(phase="", status="passed",
+                          output ="", display_phase=False):
+        if display_phase:
+            tmp_whole_info = ("$(phase)s:\n"
+                              "\tStatus:\n"
+                              "\t\t%(status)s\n"
+                              "\tOutput:\n"
+                              "\t\t%(output)s\n" 
+                              %dict(phase=phase,
+                                    status=status,
+                                    output=output.replace(os.linesep,
+                                                          os.linesep+"\t\t")))
+        else:
+            tmp_whole_info = ("\tDetails:\n"
+                              "\t\t%(output)s\n" 
+                              %dict(output=output.replace(os.linesep,
+                                                          os.linesep+"\t\t")))
         return tmp_whole_info
 
 class MultipleProcessRun(object):
@@ -1779,12 +1804,12 @@ class LoggerHandling(object):
     def warn(self, message):
         """Display warning message
         """
-        self.logger.warn(message)
+        self.logger.warn("\033[1;33;40m" + message + "\033[0m")
 
     def error(self, message):
         """Display error message
         """
-        self.logger.error(message)
+        self.logger.error("\033[1;31;40m" + message + "\033[0m")
 
     def crit(self, message):
         """Display Criticall message
@@ -1837,8 +1862,8 @@ def main():
     sys.exit(exit_code)
 
 
-#DEBUG = False
-DEBUG = True
+DEBUG = False
+#DEBUG = True
 LOGGER = LoggerHandling(os.path.join(AllStaticFuncs.getBuildPath(), "sys.log"))
 
 if __name__ == "__main__":
