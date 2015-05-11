@@ -1,7 +1,11 @@
 #!/usr/bin/python
 """
-Automatically distribute task into available host and run guest installing by virt-install,
-after done, generate case log and html report.
+Automatically distribute tasks into available host and run virtualization relevant test.
+
+Tool supports below project:
+1. Guest installation test
+2. Host migration test
+3. Guest migration test (in processing)
 Note: Script combines with jenkins
 """
 
@@ -120,9 +124,6 @@ class GuestInstalling(object):
     def writeLog2File(self):
         """Redirect result information to file,
         """
-        #LOGGER.debug(("Write log to file , params :[task=%s,returncode=%d,"
-        #              "logname=%s,host=%s,content=%s]" %(task, returncode,
-        #                                                 logname, host, content)))
         end_time = datetime.datetime.now()
         if os.path.exists(self.logname):
             os.remove(self.logname)
@@ -158,7 +159,7 @@ class GuestInstalling(object):
         '''
         job_id = self.getJobID(output)
         if job_id == 0:
-            return "abnormal"
+            return "Abnormal"
         cmd_get_job_status = self.cmd_getstatus %(job_id)
         status_buf= runCMDNonBlocked(cmd_get_job_status, timeout=10)[1]
         se_job_status = re.search("stauts : (\S+)", status_buf, )
@@ -174,13 +175,13 @@ class GuestInstalling(object):
         '''Get job id thru hamsta output,
         Search key word "internal id :" and capture the jobid with regular expression
         
-        Sample:
-        hamsta output :
-        "
-        Connecting to master 127.0.0.1 on 18431
-        MASTER::FUNCTIONS cmdline Reinstall Job send to scheduler, at 147.2.207.60 internal id: 1317
-        "
-        result: return 1317
+        Sample
+            output :
+            "
+            Connecting to master 127.0.0.1 on 18431
+            MASTER::FUNCTIONS cmdline Reinstall Job send to scheduler, at 147.2.207.60 internal id: 1317
+            "
+            return: 1317
         '''
         se_job_id = re.search(search_key, output)
         if se_job_id:
@@ -262,9 +263,7 @@ class GuestInstalling(object):
         return tmp_allcase_result
 
     def parseOutput(self, output):
-        '''Parse hamsta output and get substr
-        1. get jobid form hamsta output
-        2. get job output through hamsta cmd
+        '''Parse hamsta output and get job stdout
         '''
         #Get job id
         job_id = self.getJobID(output)
@@ -404,11 +403,10 @@ class GuestInstalling(object):
                           "start_time":datetime.datetime.now(),
                           "end_time":datetime.datetime.now()}
             self.result.append(result_map)
-        else:
-            self.status = True
-            return {'host_img_repo':host_img_repo,
-                    'virttest_repo':virttest_repo,
-                    'virtdevel_repo':virtdevel_repo}
+
+        return {'host_img_repo':host_img_repo,
+                'virttest_repo':virttest_repo,
+                'virtdevel_repo':virtdevel_repo}
 
     def _installHost(self, addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4",
                      timeout=4800):
@@ -423,9 +421,9 @@ class GuestInstalling(object):
         #Get host install repository 
         if self.status:
             #Concat multiple repos for reinstallation host (virt devel repo and virt test repo)
-            addon_repo = "%s,%s,%s" %(addon_repo,
-                                      repo_map["virttest_repo"],
-                                      repo_map["virtdevel_repo"])
+            addon_repo = "%s,%s,%s" %(repo_map["virttest_repo"],
+                                      repo_map["virtdevel_repo"],
+                                      addon_repo)
             host_img_repo = repo_map["host_img_repo"]
 
             cmd_install_host = (self.cmd_installhost %dict(img_repo=host_img_repo,
