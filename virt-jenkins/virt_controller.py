@@ -360,24 +360,6 @@ class GuestInstalling(object):
 
         self.result.append(result_map)
 
-    def _switchXenKernel(self, timeout=600):
-        '''Switch xen kernel for supporting xen virtualization ,
-        execute hamsta cmd "feed_hamsta.pl -t 1 -n set_xen_default -h host"
-        '''
-        if self.status:
-            cmd_switch_xen_ker = self.cmd_switchxenker %dict(host=self.host)
-            if DEBUG:
-                cmd_switch_xen_kernel = "./test test"
-                LOGGER.info(("Start to switch xen kernl with cmd[%s] on machine %s"
-                             %(cmd_switch_xen_ker, self.host)))
-    
-            self.execHamstaJob(cmd=cmd_switch_xen_ker,
-                               timeout=600,
-                               job_sketch="Switch xen kernel",
-                               phase="Phase1.1")
-        else:
-            LOGGER.error("Failed to install host, skip xen kernel switching")
-
     def prepareRepos(self):
         '''Prepare all needed repo for reinstallation host
         '''
@@ -397,7 +379,7 @@ class GuestInstalling(object):
                           "scenario_alloutput":"Needed repos do not exist",
                           "doc_str_flag":True,
                           "scenario_qadb_url":"",
-                          "scenario_name":"Reserve host",
+                          "scenario_name":"Reinstall host",
                           "hamsta_output":"Needed repos do not exist",
                           "hamsta_status":0,
                           "start_time":datetime.datetime.now(),
@@ -408,8 +390,25 @@ class GuestInstalling(object):
                 'virttest_repo':virttest_repo,
                 'virtdevel_repo':virtdevel_repo}
 
-    def _installHost(self, addon_repo = "http://download.suse.de/ibs/home:/jerrytang/SLE_11_SP4",
-                     timeout=4800):
+    def _switchXenKernel(self, timeout=600):
+        '''Switch xen kernel for supporting xen virtualization ,
+        execute hamsta cmd "feed_hamsta.pl -t 1 -n set_xen_default -h host"
+        '''
+        if self.status:
+            cmd_switch_xen_ker = self.cmd_switchxenker %dict(host=self.host)
+            if DEBUG:
+                cmd_switch_xen_kernel = "./test test"
+                LOGGER.info(("Start to switch xen kernl with cmd[%s] on machine %s"
+                             %(cmd_switch_xen_ker, self.host)))
+    
+            self.execHamstaJob(cmd=cmd_switch_xen_ker,
+                               timeout=600,
+                               job_sketch="Switch xen kernel",
+                               phase="Phase1.1")
+        else:
+            LOGGER.error("Failed to install host, skip xen kernel switching")
+
+    def _installHost(self, addon_repo= "", timeout=4800):
         """Reinstall host by hamsta cmd:
         feed_hamsta.pl -t 5 --re_url  repo -re_sdk sdk --pattern kvm/xen_server
         -rpms qa_test_virtualization -h host 127.0.0.1 -w
@@ -421,9 +420,13 @@ class GuestInstalling(object):
         #Get host install repository 
         if self.status:
             #Concat multiple repos for reinstallation host (virt devel repo and virt test repo)
-            addon_repo = "%s,%s,%s" %(repo_map["virttest_repo"],
-                                      repo_map["virtdevel_repo"],
-                                      addon_repo)
+            if addon_repo:
+                addon_repo = "%s,%s,%s" %(addon_repo,
+                                          repo_map["virttest_repo"],
+                                          repo_map["virtdevel_repo"])
+            else:
+                addon_repo = "%s,%s" %(repo_map["virttest_repo"],
+                                       repo_map["virtdevel_repo"])
             host_img_repo = repo_map["host_img_repo"]
 
             cmd_install_host = (self.cmd_installhost %dict(img_repo=host_img_repo,
@@ -461,6 +464,7 @@ class GuestInstalling(object):
         install guest on host.
         """
         if self.status:
+            '''
             #TODO START only for test, will be remove.
             cmd1 = "scp /root/virt/virt-simple.tcf root@%s:/usr/share/qa/tcf/" %self.host
             cmd2 = "scp /root/virt/virt-simple-run root@%s:/usr/share/qa/tools/" %self.host
@@ -470,7 +474,8 @@ class GuestInstalling(object):
             runCMDBlocked(cmd2)
             runCMDBlocked(cmd3)
             runCMDBlocked(cmd4)
-            #TODO END
+            '''
+            ig_stript = "/usr/share/qa/tools/test_virtualization-virt_install_withopt-run"
             if DEBUG:
                 timeout = 120
                 ig_stript = "/tmp/27test.sh"
@@ -522,7 +527,7 @@ class GuestInstalling(object):
         tmp_job_map["feature_host"] = self.host
         tmp_job_map["feature_prj_name"] = self.prd
         tmp_job_map["scenario_info"] = self.result
-        tmp_job_map["feature_desc"] = feature_desc  + "\n\n" + "Host :%s" %self.host
+        tmp_job_map["feature_desc"] = feature_desc  + "\n\n" + "Running Env, Host :%s" %self.host
         tmp_job_map["feature_status"] =  self.status
 
         return tmp_job_map
@@ -573,15 +578,13 @@ def installGuest(prd, queue=None,):
     vir_opt = GuestInstalling(prd, queue)
     LOGGER.info("Product version [%s] starts to run on host [%s] now" %(prd, vir_opt.host))
     if vir_opt.status:
-        #TODO start, gi_pg_repo will be removed during formal test
-        gi_pg_repo = vir_opt.getRepoSource(
-                        "source.%s.%s" %("guestinsall", vir_opt.prd_ver.lower()))
-        #TODO end
-        vir_opt._installHost(addon_repo=gi_pg_repo)
+        vir_opt._installHost()
         vir_opt._installGuest()
         vir_opt.releaseHost()
+
     vir_opt.writeLog2File()
     LOGGER.info("Product version [%s] finished" %prd)
+
     return vir_opt.getResultList(
                 feature_desc=("Target : The virt-install guest installing test."
                           " (Support xen & kvm type virtualization)\n"
@@ -707,7 +710,7 @@ class HostMigration(GuestInstalling):
             
             if se_gi_cont:
                 tc_rel = se_gi_cont.group()
-                rpl_rlt =  re.sub(".*%s" %prefix_tc_cont, "", tc_rel, flags=re.I)
+                rpl_rlt =  re.sub(".*%s" %prefix_tc_cont, "", tc_rel)
                 return rpl_rlt
             else:
                 return ""
@@ -744,7 +747,14 @@ class HostMigration(GuestInstalling):
         scenario_map["scenario_status"] = self.status
         scenario_map["scenario_name"] = "%s -> %s.%s" %(self.prd, self.dest_prd, self.virt_type)
         scenario_map["hamsta_output"] = ""
+        scenario_map["scenario_alloutput"] = ""
         scenario_map["scenario_qadb_url"] = ""
+        scenario_map["start_time"] = datetime.datetime.now()
+        scenario_map["end_time"] = datetime.datetime.now()
+        if self.result:
+            if 'start_time' in self.result[0] and 'end_time' in self.result[-1]:
+                scenario_map["start_time"] = self.result[0]['start_time']
+                scenario_map["end_time"] = self.result[-1]['end_time']
         step_info = []
         for sen in self.result:
             step_map = {}    
@@ -753,6 +763,7 @@ class HostMigration(GuestInstalling):
             step_map["step_duration"] = self.getDateTimeDelta(sen["end_time"], sen["start_time"])
             step_map["step_doc_str_flag"] = sen["doc_str_flag"]
             step_map["step_qadb_url"] = sen["scenario_qadb_url"]
+            
             if sen["hamsta_status"] == 0:
                 if sen["scenario_status"] == 0:
                     step_map["step_stdout"] = sen["step_info"] or sen["scenario_alloutput"]
@@ -781,13 +792,15 @@ def migrateHost(org_prd, dest_prd, queue=None,):
         hu_pg_repo = vir_opt.getRepoSource(
                 "source.%s.%s" %("hostupdate", vir_opt.prd_ver.lower()))
         #TODO end
-        vir_opt._installHost(addon_repo=hu_pg_repo)
+        #vir_opt._installHost(addon_repo=hu_pg_repo)
         vir_opt.updateHost()
         vir_opt.rebootHost()
         vir_opt.verifyGuest()
         vir_opt.releaseHost()
+
     vir_opt.writeLog2File()
     LOGGER.info("Product version [%s] finished" %org_prd)
+
     return vir_opt.getResultList(
                 feature_desc=("Target : The host migration test for virtualization."
                               " (Support xen & kvm type virtualization)\n"
@@ -935,14 +948,19 @@ class ConvertJson(object):
                 doc_str_flag = scn["doc_str_flag"]
             else:
                 doc_str_flag = False
-            sen_duration = (time.mktime(
-                datetime.datetime.timetuple(scn["end_time"])) - 
-                            time.mktime(
-                datetime.datetime.timetuple(scn["start_time"])))
+            
+            if 'end_time' in scn and 'start_time' in scn:
+                sen_duration = (time.mktime(
+                    datetime.datetime.timetuple(scn["end_time"])) - 
+                                time.mktime(
+                    datetime.datetime.timetuple(scn["start_time"])))
+            else:
+                sen_duration = 0
+            sen_output = scn["scenario_alloutput"] or scn["hamsta_output"]
             tc_element.append(self.getScenarioData(
                                 name=scn["scenario_name"],
                                 step_info=scn["step_info"],
-                                hamsta_output=scn["hamsta_output"],
+                                sen_output=sen_output,
                                 qadb_url=scn["scenario_qadb_url"],
                                 sen_status=scn["scenario_status"],
                                 sen_duration=sen_duration,
@@ -952,7 +970,7 @@ class ConvertJson(object):
 
         return tf_map
 
-    def getScenarioData(self, name, step_info, hamsta_output, qadb_url, sen_status, 
+    def getScenarioData(self, name, step_info, sen_output, qadb_url, sen_status, 
                         sen_duration, doc_str_flag=False, sen_type="Sce_T", keyword="Scenario"):
         '''Generate scenario section data
         '''
@@ -992,7 +1010,7 @@ class ConvertJson(object):
         else:
             if sen_status != 0:
                 step_name = name.lower()
-                error_msg = hamsta_output
+                error_msg = sen_output
                 step_info = self.addStep(step_name=step_name,
                                          step_status="failed",
                                          step_keyword=step_name,
@@ -1260,6 +1278,7 @@ class MultipleProcessRun(object):
             self.prj_status["status"] &= tc_result["feature_status"]
             tmp_prj_result.append(tc_result)
         LOGGER.debug(tmp_prj_result)
+
         #Generate json file for cucumber report
         ConvertJson(tmp_prj_result).genJsonFile()
 
