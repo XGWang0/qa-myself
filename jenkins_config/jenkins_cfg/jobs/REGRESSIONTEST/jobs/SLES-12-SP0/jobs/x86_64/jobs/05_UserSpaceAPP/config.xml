@@ -16,7 +16,7 @@
           <visibleItemCount>6</visibleItemCount>
           <type>PT_RADIO</type>
           <value>147.2.207.113,147.2.207.109</value>
-          <defaultValue>147.2.207.113</defaultValue>
+          <defaultValue>147.2.207.109</defaultValue>
           <multiSelectDelimiter>,</multiSelectDelimiter>
         </com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition>
         <com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition plugin="extended-choice-parameter@0.34">

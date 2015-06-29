@@ -52,7 +52,7 @@
   <concurrentBuild>false</concurrentBuild>
   <builders>
     <hudson.tasks.Shell>
-      <command>python /mnt/147.2.212.89/eclipse_ws/RegressionTest/stressvalidation.py -m ${MACHINE} -A ${ARCH} -b &quot;${BUILD_VER}&quot; -r ${QA_REPO}</command>
+      <command>python /mnt/147.2.212.89/eclipse_ws/RegressionTest/stressvalidation.py -T stress_validation -m ${MACHINE} -A ${ARCH} -b &quot;${BUILD_VER}&quot; -r ${QA_REPO}</command>
     </hudson.tasks.Shell>
   </builders>
   <publishers>
@@ -67,6 +67,82 @@
       <ignoreFailedTests>false</ignoreFailedTests>
       <parallelTesting>false</parallelTesting>
     </net.masterthought.jenkins.CucumberReportPublisher>
+    <hudson.plugins.emailext.ExtendedEmailPublisher plugin="email-ext@2.39">
+      <recipientList>$DEFAULT_RECIPIENTS</recipientList>
+      <configuredTriggers>
+        <hudson.plugins.emailext.plugins.trigger.FailureTrigger>
+          <email>
+            <recipientList>$DEFAULT_RECIPIENTS</recipientList>
+            <subject>Stress Validation Test On (Arch:${ARCH}, Ver: ${BUILD_VER}, Machine:${MACHINE}) Failure !! ($JOB_NAME (Build #$BUILD_NUMBER))</subject>
+            <body>$PROJECT_DEFAULT_CONTENT
+-------------------------------------------------------------------------
+Stress Validation Test is failed !!!
+
+MACH ：${MACHINE}
+ARCH  : ${ARCH}
+VERT  : ${BUILD_VER}
+QA-REPO : ${QA_REPO}
+
+More details about test result , please refer to : ${BUILD_URL}/cucumber-html-reports/</body>
+            <recipientProviders>
+              <hudson.plugins.emailext.plugins.recipients.ListRecipientProvider/>
+            </recipientProviders>
+            <attachmentsPattern></attachmentsPattern>
+            <attachBuildLog>false</attachBuildLog>
+            <compressBuildLog>false</compressBuildLog>
+            <replyTo>$PROJECT_DEFAULT_REPLYTO</replyTo>
+            <contentType>project</contentType>
+          </email>
+        </hudson.plugins.emailext.plugins.trigger.FailureTrigger>
+        <hudson.plugins.emailext.plugins.trigger.SuccessTrigger>
+          <email>
+            <recipientList>$DEFAULT_RECIPIENTS</recipientList>
+            <subject>Stress Validation Test On (Arch:${ARCH}, Ver: ${BUILD_VER}, Machine:${MACHINE}) Pass !! ($JOB_NAME (Build #$BUILD_NUMBER))</subject>
+            <body>$PROJECT_DEFAULT_CONTENT
+-------------------------------------------------------------------------
+Stress Validation Test is passed !!!
+Down-Stream job (${JENKINS_URL}/job/REGRESSIONTEST/SLES-11-SP4/x86_64/04_KernelRegression) will be triggered.  
+
+MACH ：${MACHINE}
+ARCH  : ${ARCH}
+VERT  : ${BUILD_VER}
+QA-REPO : ${QA_REPO}
+
+More details about test result , please refer to : ${BUILD_URL}/cucumber-html-reports/</body>
+            <recipientProviders>
+              <hudson.plugins.emailext.plugins.recipients.ListRecipientProvider/>
+            </recipientProviders>
+            <attachmentsPattern></attachmentsPattern>
+            <attachBuildLog>false</attachBuildLog>
+            <compressBuildLog>false</compressBuildLog>
+            <replyTo>$PROJECT_DEFAULT_REPLYTO</replyTo>
+            <contentType>project</contentType>
+          </email>
+        </hudson.plugins.emailext.plugins.trigger.SuccessTrigger>
+      </configuredTriggers>
+      <contentType>default</contentType>
+      <defaultSubject>$DEFAULT_SUBJECT</defaultSubject>
+      <defaultContent>$DEFAULT_CONTENT</defaultContent>
+      <attachmentsPattern></attachmentsPattern>
+      <presendScript>$DEFAULT_PRESEND_SCRIPT</presendScript>
+      <attachBuildLog>false</attachBuildLog>
+      <compressBuildLog>false</compressBuildLog>
+      <replyTo>$DEFAULT_REPLYTO</replyTo>
+      <saveOutput>false</saveOutput>
+      <disabled>false</disabled>
+    </hudson.plugins.emailext.ExtendedEmailPublisher>
+    <hudson.plugins.parameterizedtrigger.BuildTrigger plugin="parameterized-trigger@2.26">
+      <configs>
+        <hudson.plugins.parameterizedtrigger.BuildTriggerConfig>
+          <configs>
+            <hudson.plugins.parameterizedtrigger.CurrentBuildParameters/>
+          </configs>
+          <projects>04_KernelRegression</projects>
+          <condition>UNSTABLE_OR_BETTER</condition>
+          <triggerWithNoParameters>false</triggerWithNoParameters>
+        </hudson.plugins.parameterizedtrigger.BuildTriggerConfig>
+      </configs>
+    </hudson.plugins.parameterizedtrigger.BuildTrigger>
   </publishers>
   <buildWrappers>
     <hudson.plugins.ansicolor.AnsiColorBuildWrapper plugin="ansicolor@0.4.1">

@@ -4,16 +4,17 @@
   <description></description>
   <keepDependencies>false</keepDependencies>
   <properties>
-    <hudson.plugins.buildblocker.BuildBlockerProperty plugin="build-blocker-plugin@1.6">
-      <useBuildBlocker>true</useBuildBlocker>
-      <blockingJobs>.*REGRESSIONTEST/SLES-11-SP4/x86_64/03_StressValidation</blockingJobs>
-    </hudson.plugins.buildblocker.BuildBlockerProperty>
     <hudson.model.ParametersDefinitionProperty>
       <parameterDefinitions>
         <hudson.model.StringParameterDefinition>
+          <name>PRODUCT</name>
+          <description></description>
+          <defaultValue>SLES11-SP4-Beta4</defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
           <name>REPOSITORY</name>
           <description></description>
-          <defaultValue>http://147.2.207.1/dist/install/SLP/SLES-11-SP4-LATEST/x86_64/DVD1/</defaultValue>
+          <defaultValue></defaultValue>
         </hudson.model.StringParameterDefinition>
         <com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition plugin="extended-choice-parameter@0.34">
           <name>MACHINE</name>
@@ -21,8 +22,8 @@
           <quoteValue>false</quoteValue>
           <visibleItemCount>6</visibleItemCount>
           <type>PT_RADIO</type>
-          <value>147.2.207.113,147.2.207.109</value>
-          <defaultValue>147.2.207.113</defaultValue>
+          <value>147.2.207.1,147.2.207.2,147.2.207.3,147.2.207.4</value>
+          <defaultValue>147.2.207.1</defaultValue>
           <multiSelectDelimiter>,</multiSelectDelimiter>
         </com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition>
         <com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition plugin="extended-choice-parameter@0.34">
@@ -32,85 +33,39 @@
           <visibleItemCount>6</visibleItemCount>
           <type>PT_RADIO</type>
           <value>i586,ia64,ppc,s390,s390x,x86_64</value>
-          <defaultValue>x86_64</defaultValue>
+          <defaultValue>i586</defaultValue>
           <multiSelectDelimiter>,</multiSelectDelimiter>
         </com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition>
-        <hudson.model.StringParameterDefinition>
-          <name>BUILD_VER</name>
-          <description>Build version</description>
-          <defaultValue></defaultValue>
-        </hudson.model.StringParameterDefinition>
       </parameterDefinitions>
     </hudson.model.ParametersDefinitionProperty>
   </properties>
   <scm class="hudson.scm.NullSCM"/>
-  <assignedNode>master</assignedNode>
-  <canRoam>false</canRoam>
+  <canRoam>true</canRoam>
   <disabled>false</disabled>
   <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
   <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
   <triggers/>
-  <concurrentBuild>false</concurrentBuild>
+  <concurrentBuild>true</concurrentBuild>
   <builders>
     <hudson.tasks.Shell>
-      <command>python /mnt/147.2.212.89/eclipse_ws/RegressionTest/reinsthost.py -j ${JOB_NAME} -r ${REPOSITORY} -m ${MACHINE} -A ${ARCH} -b &quot;${BUILD_VER}&quot;</command>
+      <command>echo $PRODUCT
+
+echo $MACHINE
+
+echo $REPOSITORY
+
+sleep 10</command>
     </hudson.tasks.Shell>
   </builders>
   <publishers>
-    <net.masterthought.jenkins.CucumberReportPublisher plugin="cucumber-reports@0.0.24">
-      <jsonReportDirectory></jsonReportDirectory>
-      <pluginUrlPath></pluginUrlPath>
-      <fileIncludePattern>*.json</fileIncludePattern>
-      <fileExcludePattern></fileExcludePattern>
-      <skippedFails>false</skippedFails>
-      <undefinedFails>false</undefinedFails>
-      <noFlashCharts>false</noFlashCharts>
-      <ignoreFailedTests>false</ignoreFailedTests>
-      <parallelTesting>false</parallelTesting>
-    </net.masterthought.jenkins.CucumberReportPublisher>
     <hudson.plugins.emailext.ExtendedEmailPublisher plugin="email-ext@2.39">
       <recipientList>$DEFAULT_RECIPIENTS</recipientList>
       <configuredTriggers>
-        <hudson.plugins.emailext.plugins.trigger.SuccessTrigger>
-          <email>
-            <recipientList>$DEFAULT_RECIPIENTS</recipientList>
-            <subject>Reinstallation Machine Test On (Arch:${ARCH}, Ver: ${BUILD_VER}, Machine:${MACHINE}) Pass !! ($JOB_NAME (Build #$BUILD_NUMBER))</subject>
-            <body>$PROJECT_DEFAULT_CONTENT
--------------------------------------------------------------------------
-Re-installation Host Test is passed !!!
-Down-Stream job (http://147.2.207.67:8080//job/REGRESSIONTEST/SLES-11-SP4/x86_64/03_StressValidation) will be triggered.  
-
-MACH ：${MACHINE}
-ARCH  : ${ARCH}
-VERT  : ${BUILD_VER}
-REPO : ${REPOSITORY}
-
-More details about test result , please refer to : ${BUILD_URL}/cucumber-html-reports/</body>
-            <recipientProviders>
-              <hudson.plugins.emailext.plugins.recipients.ListRecipientProvider/>
-            </recipientProviders>
-            <attachmentsPattern></attachmentsPattern>
-            <attachBuildLog>false</attachBuildLog>
-            <compressBuildLog>false</compressBuildLog>
-            <replyTo>$PROJECT_DEFAULT_REPLYTO</replyTo>
-            <contentType>project</contentType>
-          </email>
-        </hudson.plugins.emailext.plugins.trigger.SuccessTrigger>
         <hudson.plugins.emailext.plugins.trigger.FailureTrigger>
           <email>
-            <recipientList>$DEFAULT_RECIPIENTS</recipientList>
-            <subject>Reinstallation Machine Test On (Arch:${ARCH}, Ver: ${BUILD_VER}, Machine:${MACHINE}) Failure !! ($JOB_NAME (Build #$BUILD_NUMBER))</subject>
-            <body>$PROJECT_DEFAULT_CONTENT
--------------------------------------------------------------------------
-Re-installation Host Test is passed !!!
-Down-Stream job (${JENKINS_URL}/job/REGRESSIONTEST/SLES-11-SP4/x86_64/03_StressValidation) will be triggered.  
-
-MACH ：${MACHINE}
-ARCH  : ${ARCH}
-VERT  : ${BUILD_VER}
-REPO : ${REPOSITORY}
-
-More details about test result , please refer to : ${BUILD_URL}/cucumber-html-reports/</body>
+            <recipientList></recipientList>
+            <subject>$PROJECT_DEFAULT_SUBJECT</subject>
+            <body>$PROJECT_DEFAULT_CONTENT</body>
             <recipientProviders>
               <hudson.plugins.emailext.plugins.recipients.ListRecipientProvider/>
             </recipientProviders>
@@ -139,20 +94,15 @@ More details about test result , please refer to : ${BUILD_URL}/cucumber-html-re
           <configs>
             <hudson.plugins.parameterizedtrigger.PredefinedBuildParameters>
               <properties>MACHINE=$MACHINE
-ARCH=$ARCH
-BUILD_VER=$BUILD_VER</properties>
+ARCH=$ARCH</properties>
             </hudson.plugins.parameterizedtrigger.PredefinedBuildParameters>
           </configs>
-          <projects>REGRESSIONTEST/SLES-11-SP4/x86_64/03_StressValidation</projects>
+          <projects>REGRESSIONTEST/03_StressValidation</projects>
           <condition>UNSTABLE_OR_BETTER</condition>
           <triggerWithNoParameters>false</triggerWithNoParameters>
         </hudson.plugins.parameterizedtrigger.BuildTriggerConfig>
       </configs>
     </hudson.plugins.parameterizedtrigger.BuildTrigger>
   </publishers>
-  <buildWrappers>
-    <hudson.plugins.ansicolor.AnsiColorBuildWrapper plugin="ansicolor@0.4.1">
-      <colorMapName>xterm</colorMapName>
-    </hudson.plugins.ansicolor.AnsiColorBuildWrapper>
-  </buildWrappers>
+  <buildWrappers/>
 </project>

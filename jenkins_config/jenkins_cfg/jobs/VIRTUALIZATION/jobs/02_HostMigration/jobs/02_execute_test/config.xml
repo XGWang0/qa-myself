@@ -49,7 +49,7 @@ You could select sutiable for yourself parameters or default on dashboard to tir
           <visibleItemCount>6</visibleItemCount>
           <type>PT_CHECKBOX</type>
           <value>SLES-11-SP3-64.XEN,SLES-11-SP3-64.KVM,SLES-11-SP4-64.XEN,SLES-11-SP4-64.KVM,SLES-12-SP0-64.XEN,SLES-12-SP0-64.KVM</value>
-          <defaultValue>SLES-11-SP3-64.XEN,SLES-11-SP3-64.KVM</defaultValue>
+          <defaultValue>SLES-11-SP3-64.XEN</defaultValue>
           <multiSelectDelimiter>,</multiSelectDelimiter>
         </com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition>
         <com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition plugin="extended-choice-parameter@0.34">
@@ -58,7 +58,7 @@ You could select sutiable for yourself parameters or default on dashboard to tir
           <quoteValue>false</quoteValue>
           <visibleItemCount>4</visibleItemCount>
           <type>PT_CHECKBOX</type>
-          <value>SLES-11-SP4-64,SLES-12-SP0-64</value>
+          <value>SLES-11-SP4-64,SLES-12-SP0-64,SLES-12-SP1-64</value>
           <defaultValue>SLES-11-SP4-64</defaultValue>
           <multiSelectDelimiter>,</multiSelectDelimiter>
         </com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition>
@@ -66,7 +66,7 @@ You could select sutiable for yourself parameters or default on dashboard to tir
           <name>HOST_LIST</name>
           <description>&lt;font color=&quot;black&quot; size=3&gt;&lt;b&gt;Available host list, all test will be dynamically distributed to inputted host to run.
  (Allow to input multiple hosts,take comma as separator. eg: 147.2.207.2,147.2.207.3)&lt;/b&gt;&lt;/font&gt;</description>
-          <defaultValue>147.2.207.171</defaultValue>
+          <defaultValue>147.2.207.171,147.2.207.60</defaultValue>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
           <name>USER_DEFINED_REPO</name>
@@ -86,7 +86,7 @@ You could select sutiable for yourself parameters or default on dashboard to tir
   <concurrentBuild>false</concurrentBuild>
   <builders>
     <hudson.tasks.Shell>
-      <command>cd /var/lib/amazon_jenkins_workspece/workspace/VIRTUALIZATION/01_InstallingGuest/02_execute_test &amp;&amp; python jenkins_execute_jobs.py -t hu --org-product ${ORG_PRODUCT} --upg-product ${UPG_PRODUCT} --hu-host ${HOST_LIST}</command>
+      <command>cd /usr/share/qa/virtautolib/jenkins &amp;&amp; python jenkins_execute_jobs.py -t hu --org-product ${ORG_PRODUCT} --upg-product ${UPG_PRODUCT} --hu-host ${HOST_LIST}</command>
     </hudson.tasks.Shell>
   </builders>
   <publishers>

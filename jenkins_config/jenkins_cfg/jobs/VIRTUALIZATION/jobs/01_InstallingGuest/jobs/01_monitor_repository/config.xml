@@ -25,6 +25,9 @@ Monitor job supports both ways (Manual | Automatic) to be triggered. &lt;br&gt;&
   </logRotator>
   <keepDependencies>true</keepDependencies>
   <properties>
+    <hudson.plugins.buildblocker.BuildBlockerProperty plugin="build-blocker-plugin@1.6">
+      <useBuildBlocker>false</useBuildBlocker>
+    </hudson.plugins.buildblocker.BuildBlockerProperty>
     <hudson.model.ParametersDefinitionProperty>
       <parameterDefinitions>
         <com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition plugin="extended-choice-parameter@0.34">
@@ -54,14 +57,74 @@ Monitor job supports both ways (Manual | Automatic) to be triggered. &lt;br&gt;&
   <disabled>false</disabled>
   <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
   <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
-  <triggers/>
+  <triggers>
+    <org.jenkinsci.plugins.scripttrigger.ScriptTrigger plugin="scripttrigger@0.31">
+      <spec>H/5 * * * *</spec>
+      <labelRestriction>false</labelRestriction>
+      <enableConcurrentBuild>false</enableConcurrentBuild>
+      <script>sh -x /usr/share/qa/virtautolib/jenkins/jenkins_monitor_repo.sh &quot;SLE-12&quot; &quot;SP0&quot;</script>
+      <exitCode>0</exitCode>
+    </org.jenkinsci.plugins.scripttrigger.ScriptTrigger>
+  </triggers>
   <concurrentBuild>false</concurrentBuild>
   <builders>
-    <hudson.tasks.Shell>
-      <command>sh -x ./jenkins_monitor_repo.sh ${OS} ${SP}
+    <hudson.plugins.groovy.SystemGroovy plugin="groovy@1.25">
+      <scriptSource class="hudson.plugins.groovy.StringScriptSource">
+        <command>import jenkins.model.*
+
+def q = Jenkins.instance.queue
+
+job_list = q.items.findAll{ it.task.url.endsWith(&apos;01_InstallingGuest/job/02_execute_test/&apos;) }
+job_list_len = job_list.size()
+if(job_list_len &gt;= 2){
+    sleep(10000)
+    println job_list.sort()[1..-1]
+    rmed_list = job_list.sort()[1..-1].each{ q.cancel(it.task) }
+}
 </command>
-    </hudson.tasks.Shell>
+      </scriptSource>
+      <bindings></bindings>
+      <classpath></classpath>
+    </hudson.plugins.groovy.SystemGroovy>
   </builders>
-  <publishers/>
+  <publishers>
+    <hudson.plugins.emailext.ExtendedEmailPublisher plugin="email-ext@2.39">
+      <recipientList>$DEFAULT_RECIPIENTS</recipientList>
+      <configuredTriggers>
+        <hudson.plugins.emailext.plugins.trigger.SuccessTrigger>
+          <email>
+            <recipientList></recipientList>
+            <subject>$PROJECT_DEFAULT_SUBJECT</subject>
+            <body>$PROJECT_DEFAULT_CONTENT</body>
+            <recipientProviders>
+              <hudson.plugins.emailext.plugins.recipients.ListRecipientProvider/>
+            </recipientProviders>
+            <attachmentsPattern></attachmentsPattern>
+            <attachBuildLog>false</attachBuildLog>
+            <compressBuildLog>false</compressBuildLog>
+            <replyTo>$PROJECT_DEFAULT_REPLYTO</replyTo>
+            <contentType>project</contentType>
+          </email>
+        </hudson.plugins.emailext.plugins.trigger.SuccessTrigger>
+      </configuredTriggers>
+      <contentType>default</contentType>
+      <defaultSubject>$JOB_NAME (Build #$BUILD_NUMBER) - New version of packages were found, trigger virtualization test.</defaultSubject>
+      <defaultContent>Jenkin&apos;s test results:
+
+Project:       $PROJECT_NAME  (Build #$BUILD_NUMBER)
+Test Node:     $NODE_NAME
+ 
+Test Results:  $BUILD_STATUS
+
+Trigger Target: 01_Installing_Test_On_Virtualization</defaultContent>
+      <attachmentsPattern></attachmentsPattern>
+      <presendScript>$DEFAULT_PRESEND_SCRIPT</presendScript>
+      <attachBuildLog>false</attachBuildLog>
+      <compressBuildLog>false</compressBuildLog>
+      <replyTo>$DEFAULT_REPLYTO</replyTo>
+      <saveOutput>false</saveOutput>
+      <disabled>false</disabled>
+    </hudson.plugins.emailext.ExtendedEmailPublisher>
+  </publishers>
   <buildWrappers/>
 </project>
