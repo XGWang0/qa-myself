@@ -77,40 +77,55 @@ def main():
 
     LOGGER.info(StringClor().printColorString("---------Test Start -----------",
                                              StringClor.HIGLIG))
+    # Initial environment
+    CommonOpt().cleanFile(subfix="pkl")
+    CommonOpt().cleanFile(subfix="json")
+
     #Update available host status
-    HostContorller().markHostStatus([options.regre_mach], HOST_STATUS_FILE,
-                                    org_status=HostContorller.HOST_FREE,
-                                    cur_status=HostContorller.HOST_RUNNING)
+    ins_qaset = QA_TESTSET(options.regre_productv, options.regre_arch, options.regre_mach, options.regre_report, (feat_name, feat_desc))
 
-    ins_connslave = ConnSlave(options.regre_mach,
-                              REINSTALL_MACHINE_USER,
-                              REINSTALL_MACHINE_PASSWD)
-    ins_qaset = QA_TESTSET(options.regre_arch, ins_connslave, (feat_name, feat_desc))
+    if HostContorller().reserveHost(options.regre_mach, HOST_STATUS_FILE, ins_qaset.report_file):
+        pass
+    else:
+        rel_msg = "Host %s is busy now, test exit." %options.regre_mach
+        LOGGER.error(rel_msg)
+        exec_duration = CommonOpt().getDiffTime(start_time, datetime.datetime.now())
+        tc_data = ins_qaset.combineTCData(tc_name='Lock host', tc_status='failed', 
+                                 tc_duration=exec_duration, tc_output=rel_msg)
+        ts_data = ins_qaset.combineTSData(ts_name="Reserve Host", ts_tc_list=tc_data)
+        ts_result.extend(ts_data)
+        ins_qaset._exit(ts_result, flg='1vn')
 
-    rel = ins_qaset.sshSlave(try_times=60, interval_time=5)
+    rl = ins_qaset.sshSlave(try_times=60, interval_time=5)
+
 
     rel = ins_qaset.installPackage(qa_repo=options.regre_qarepo)
+    LOGGER.info(options.regre_ts)
+    rel = ins_qaset.genRTConfig(options.regre_ts)
+
     rel = ins_qaset.executeTS(ts_run=ts_run, timeout=60)
 
-    ins_qaset.checkFile(timeout=172800, interval_time=120)
+    ins_qaset.checkFile(ts_run=ts_run, timeout=172800, interval_time=120)
+
+    ts_data = ins_qaset.getTestSuiteInfo()
+    ts_result.extend(ts_data)
+
     
-    rel = ins_qaset.getTestSuiteInfo()
     ins_qaset.executeCMD("mkdir -p /var/log/qaset/bak", title="Create bak folder")
     ins_qaset.executeCMD("cp -r /var/log/qaset/runs /var/log/qaset/bak/runs_`date +\"%Y-%m-%d-%H-%M-%S\"`", title="Backup runs folder")
     ins_qaset.executeCMD("cp -r /var/log/qaset/submission /var/log/qaset/bak/submission_`date +\"%Y-%m-%d-%H-%M-%S\"`", title="Backup runs folder")
 
-    ts_data = ins_qaset.getTestSuiteInfo()
-    ts_result.extend(ts_data)
+
     '''
     exec_duration = CommonOpt().getDiffTime(start_time, datetime.datetime.now())
     tc_data = ins_qaset.combineTCData(tc_name='Get os version', tc_status='passed', 
                                  tc_duration=exec_duration, tc_output=rel[1])
     ts_data = ins_qaset.combineTSData(ts_name="OS version", ts_tc_list=tc_data)
-    '''
-    #ins_qaset.rebootSlave()
 
+    #ins_qaset.rebootSlave()
+    '''
     ins_qaset._exit(ts_result, flg='1v1')
 
 if __name__ == '__main__':
-
+    LOGGER.info("------------START---------------")
     main()

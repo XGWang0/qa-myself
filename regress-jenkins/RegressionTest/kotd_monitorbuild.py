@@ -56,10 +56,7 @@ class RTBuildChange(object):
         self.rdy_tirgger_job_file = os.path.join(self.prj_cfg_path, KOTD_RDY_TRIGGER_JOB_FILE)
 
         # Initial jenkins jobs and triggered cmd
-        self.prefix_jenkins_job = options.kotdmb_jjob
-        self.jenkins_job = [self.prefix_jenkins_job + "/%(arch)s/job/02_InstallHost", self.prefix_jenkins_job + "/%(arch)s/job/03_UpdateKernel"]
-        self.jenkins_job_with_param = [self.jenkins_job[0] + "/buildWithParameters?ARCH=%(arch)s&BUILD_VER=%(build_ver)s&KERNEL_NAME=%(kernel_name)s&MACHINE=",
-                                       self.jenkins_job[1] + "/buildWithParameters?ARCH=%(arch)s&BUILD_VER=%(build_ver)s&KERNEL_REPO=%(repo)s/standard/&KERNEL_NAME=%(kernel_name)s&MACHINE="]
+        self.jenkins_job = "wget -O - -q \"" + os.path.dirname(PrjPath().getJobURL()[:-1])  + "/%(arch)s/buildWithParameters?ARCH=%(arch)s&BUILD_VER=%(build_ver)s&KERNEL_NAME=%(kernel_name)s&REPORT_FILE=%(report_file)s&MACHINE="
         
         self.triggered_arch = ""
         self.return_code = 1
@@ -67,32 +64,42 @@ class RTBuildChange(object):
         # Instance for url operation and host controller
         self.urlpaser = URLParser()
         self.flowctrller = HostContorller()
-        #self.loopCheckBuildChange(self.larch)
 
     def loopCheckBuildChange(self):
         '''Traverse needed arches and mode for build change
         '''
         for arch in self.arch:
-            # Get stored data from local file
-            cmd_triggerjob_map = CommonOpt().loadData(self.rdy_tirgger_job_file) or {}
+            LOGGER.info("Current arch is  %s" %(arch))
             
             # Get build change information
             bc = self.getBuildChange(arch)
             LOGGER.info(bc)
+            if bc[2] == "":
+                LOGGER.warn("Can not get build infomation, skip !!")
+                continue
             #bc = (True, 'kernel-default-24983947dffdsf.rpm', '>kernel-default-24983947dffdsf.rpm<')
             
             for mode in (arch in self.hosts and self.hosts[arch].keys() or []):
-                trigger_job_cmd = ""
+                trigger_job_cmd = ''
 
-                LOGGER.info("Current arch and mode are  %s %s" %(arch,mode))
+                # Get stored data from local file
+                cmd_triggerjob_map = CommonOpt().loadData(self.rdy_tirgger_job_file) or {}
+                LOGGER.info("Current mode is  %s" %(mode))
                 build_version = self.getBuildVersion(bc[2], mode)
 
                 # Check jenkins job if is enable
-                enable_job_name = self.getEnableJenkinsJob(arch, build_version, 'kernel-%s'%(mode))
+                #enable_job_name = self.getEnableJenkinsJob(arch, build_version, 'kernel-%s'%(mode))
                 key_name_tirgger_job = '%s_%s_%s' %(self.prj_name, arch, mode)
                 # If build change is existent, followint operation will be done
                 if bc[0] is True:
+                    report_file = CommonOpt.generateRandomStr()
+                    trigger_job_cmd = self.jenkins_job %dict(arch=arch,
+                                                             build_ver=build_version,
+                                                             kernel_name='kernel-%s' %(mode),
+                                                             report_file=report_file)
                     LOGGER.info("BC:Detect build change")
+
+                    '''
                     if  enable_job_name:
                         trigger_job_cmd = "wget -O - -q \"%s" %enable_job_name
                         cmd_triggerjob_map[key_name_tirgger_job] = ""
@@ -101,13 +108,25 @@ class RTBuildChange(object):
                                     "There is no enable job for build change triggering",
                                     StringClor.F_GRE))
                         cmd_triggerjob_map[key_name_tirgger_job] = enable_job_name
-                    
+                    '''
                     #Dump data to local file which it's convenients for next trigger 
-                    CommonOpt().dumpData(self.rdy_tirgger_job_file, cmd_triggerjob_map)
+                    #CommonOpt().dumpData(self.rdy_tirgger_job_file, cmd_triggerjob_map)
                 
                 # BUild change is non-existent
                 elif bc[0] is False:
-                    LOGGER.info("NBC: NO build change")
+                    if key_name_tirgger_job in cmd_triggerjob_map and cmd_triggerjob_map[key_name_tirgger_job]:
+                        trigger_job_cmd = cmd_triggerjob_map[key_name_tirgger_job]
+                        LOGGER.info(StringClor().printColorString(
+                                    "No build change, Try to tirgger last build change with job cmd : %s" %trigger_job_cmd,
+                                    StringClor.F_GRE))
+
+                        cmd_triggerjob_map[key_name_tirgger_job]=""
+                        CommonOpt().dumpData(self.rdy_tirgger_job_file, cmd_triggerjob_map)
+                    else:
+                        LOGGER.info(StringClor().printColorString(
+                                    "No build change or last build change needs to be triggered",
+                                    StringClor.F_GRE))
+                    '''
                     if enable_job_name:
                         # If last build change is existent, the job should be tiggered
                         if key_name_tirgger_job in cmd_triggerjob_map and cmd_triggerjob_map[key_name_tirgger_job]:
@@ -126,13 +145,12 @@ class RTBuildChange(object):
                     else:
                         LOGGER.info(StringClor().printColorString('No enable job to be triggered',
                                     StringClor.F_GRE))
-
+                    '''
                 self.triggerJob(arch, mode, trigger_job_cmd, cmd_triggerjob_map)
                 LOGGER.info("-"*50)   
-
+    '''
     def getEnableJenkinsJob(self, arch, build_ver, kernel_name):
-        ''' Return enable jobs with parameters
-        '''
+
         for (i, job) in enumerate(self.jenkins_job):
             if JenkinsAPI().checkBuildable(job %dict(arch=arch)) is True:
                 break
@@ -150,27 +168,31 @@ class RTBuildChange(object):
                                                         repo=self.repo,
                                                         build_ver=build_ver,
                                                         kernel_name=kernel_name)
-
+    '''
     def triggerJob(self, arch, mode, cmd, reloaded_data):
         key_name_tirgger_job = '%s_%s_%s' %(self.prj_name, arch, mode)
+        
         if cmd:
-            fh = self.flowctrller.markHostStatus(self.hosts[arch][mode], self.host_status_file,
-                                                 org_status=HostContorller.HOST_FREE,
-                                                 cur_status=HostContorller.HOST_RUNNING)
+            report_file = re.search('REPORT_FILE=(\S+)&', cmd, re.I).groups()[0]
+            
+            fh = self.flowctrller.chooseHost(self.hosts[arch][mode], self.host_status_file, report_file)
+                    
+
             if fh:
                 LOGGER.info("Get available host : %s" %fh)
-
+    
                 self.return_code = 0
                 cmd = cmd + fh + "\""
-
+    
                 LOGGER.info("Trigger job %s" %cmd)
                 os.system(cmd)
             else:
                 LOGGER.info("NO available host %s for triggering, dump data to file" %str(self.hosts[arch][mode]))
                 reloaded_data[key_name_tirgger_job]=cmd
                 CommonOpt().dumpData(self.rdy_tirgger_job_file, reloaded_data)
-
-        self.triggered_arch = self.triggered_arch and  self.triggered_arch + ',%s' %arch or arch
+        else:
+            LOGGER.info("No trigger build")
+        #self.triggered_arch = self.triggered_arch and  self.triggered_arch + ',%s' %arch or arch
 
     def getBuildChange(self, arch):
         url = os.path.join(self.repo, "standard", arch)
@@ -205,7 +227,7 @@ def main():
     options, _args = ins_parseparam.parse_args()
     
     # Get config file of kotd project
-    print KOTD_REF_TEST_CFG_FILE
+    LOGGER.info("start")
     if os.path.exists(KOTD_REF_TEST_CFG_FILE):
         rtbc = RTBuildChange(options)
         rtbc.loopCheckBuildChange()

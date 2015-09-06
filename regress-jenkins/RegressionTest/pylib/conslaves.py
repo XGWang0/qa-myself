@@ -74,6 +74,7 @@ class ConnSlave(object):
 
                     output_str = "Connect slave timeout, delay %s  try it again ..." %interval_time
                     LOGGER.info(self.color_ins.printColorString(output_str, StringColor.F_YEL))
+                    LOGGER.info(self.color_ins.printColorString(self.ssh.before, StringColor.F_YEL))
                 elif i == 2:
                     self.ssh.sendline("yes")
                     continue
@@ -123,6 +124,53 @@ class ConnSlave(object):
 
         return True
 
+
+    def scpFiles2(self, org_files, desc_files):
+        
+        expectations = ['[Pp]assword',
+                        'continue (yes/no)?',
+                        pexpect.EOF,
+                        pexpect.TIMEOUT,
+                        'Name or service not known',
+                        'Permission denied',
+                        'No such file or directory',
+                        'No route to host',
+                        'Network is unreachable',
+                        'failure in name resolution',
+                        'No space left on device'
+                        ]
+
+        try:
+            child = pexpect.spawn( 'scp -r %(orgfolder)s %(user)s@%(passwd)s:%(destfolder)s'%dict(orgfolder=org_files,
+                                                                                                  user=self.slave_name,
+                                                                                                  passwd=self.slave_addr,
+                                                                                                  destfolder=desc_files))
+            res = child.expect( expectations )
+            print "Child Exit Status :",child.exitstatus
+            print  res,"::",child.before," :After:",child.after
+            if res == 0:
+                child.sendline(self.slave_passwd)
+                return self.scpFiles2(org_files, desc_files, try_times=3, timeout=5)
+            if res == 1:
+                child.sendline('yes')
+                return self.scpFiles2(org_files, desc_files, try_times=3, timeout=5)
+            if res == 2:
+                line = child.before
+                print "Line:",line
+                print "Now check the result and return status."
+            if res == 3:
+                print "TIMEOUT Occurred."
+                child.kill(0)
+                return False
+            if res >= 4:
+                child.kill(0)
+                print "ERROR:",expectations[res]
+                return False
+            return True
+        except:
+            import traceback; traceback.print_exc()
+            print "Did file finish?",child.exitstatus
+
     def closeSSH(self):
         if self.ssh.isalive():
             self.ssh.close(force=True)
@@ -137,67 +185,64 @@ class ConnSlave(object):
            (5, msg) : whole operation timeout
            (0, msg) : ssh handler is not alive 
         '''
-
-        def _handleSpecialChar(strings, spe_char_list=['$','?','*','"','+','[',']','(',')','\\', '+']):
-            '''Handle special characters
-            '''
-            tmp_str = strings
-            for sc in spe_char_list:
-                if sc in tmp_str:
-                    if '\\' == sc:
-                        tmp_str = tmp_str.replace(sc,'\\\\')
-                    else:
-                        tmp_str = tmp_str.replace(sc,'\\%s' %sc)
-            return tmp_str
-
         rlt = ()
-        if self.ssh.isalive():
-            self.ssh.setwinsize(65535, 200)
-            self.ssh.sendline(cmd)
-    
-            LOGGER.info(self.color_ins.printColorString("Execute cmd :%s"%cmd,
-                                                        StringColor.F_BLU))
-            rel = ""
-            #if handlespecialchar:
-            #        cmd = _handleSpecialChar(cmd)
-            start_time = time.time()
-            try:
-                while time.time() - start_time < w_timeout:
-                    #TODO: SSH Connection is broken , maybe cause some issues
-                    rel = rel + self.ssh.read_nonblocking(1, timeout=s_timeout)
-                    if chk_reltime is True:
-                        if re.search(r'%s\s*(.*)%s' %(re.escape(cmd), self.prompt), rel, re.S|re.I):
-                            break
-            except pexpect.TIMEOUT as e:
-                LOGGER.warn(self.color_ins.printColorString("Read 1 character from console timeout:%d" % s_timeout,
-                                                            StringColor.F_YEL))
+        for i in range(3):
+            if rlt:
+                if rlt[0] == 0:
+                    if self.sshSlave() is True:
+                        rlt=()
+                    else:
+                        continue
+                else:
+                    break
+            else:
                 pass
 
-            except pexpect.EOF as e1:
-                LOGGER.warn(self.color_ins.printColorString(e1,
-                                                             StringColor.F_RED))
-                rlt =  (0, "Connection is broken")
-
-            finally:
-                if rlt:
+            if self.ssh.isalive():
+                self.ssh.setwinsize(65535, 200)
+                self.ssh.sendline(cmd)
+        
+                LOGGER.info(self.color_ins.printColorString("Execute cmd :%s"%cmd,
+                                                            StringColor.F_BLU))
+                rel = ""
+                start_time = time.time()
+                try:
+                    while time.time() - start_time < w_timeout:
+                        #TODO: SSH Connection is broken , maybe cause some issues
+                        rel = rel + self.ssh.read_nonblocking(1, timeout=s_timeout)
+                        if chk_reltime is True:
+                            if re.search(r'%s\s*(.*)%s' %(re.escape(cmd), self.prompt), rel, re.S|re.I):
+                                break
+                except pexpect.TIMEOUT as e:
+                    LOGGER.warn(self.color_ins.printColorString("Read 1 character from console timeout:%d" % s_timeout,
+                                                                StringColor.F_YEL))
                     pass
-                else:
-                    re_ins = re.search(r'%s\s*(.*)%s' %(re.escape(cmd), self.prompt), rel, re.S|re.I)
-                    if re_ins:
-                        rlt =  (1, re_ins.groups()[0].strip())
+    
+                except pexpect.EOF as e1:
+                    LOGGER.warn(self.color_ins.printColorString(e1,
+                                                                 StringColor.F_RED))
+                    rlt =  (0, "Connection is broken")
+    
+                finally:
+                    if rlt:
+                        pass
                     else:
-                        rlt = (3, rel)
-        else:
-            LOGGER.warn(self.color_ins.printColorString("Lost connection with slave",
-                                                        StringColor.F_RED))
-            rlt = (0, "SSH handler is not alive")
+                        re_ins = re.search(r'%s\s*(.*)%s' %(re.escape(cmd), self.prompt), rel, re.S|re.I)
+                        if re_ins:
+                            rlt =  (1, re_ins.groups()[0].strip())
+                        else:
+                            rlt = (3, rel)
+            else:
+                LOGGER.warn(self.color_ins.printColorString("Lost connection with slave",
+                                                            StringColor.F_RED))
+                rlt = (0, "SSH handler is not alive")
         
         return rlt
 
     def getReturnCode(self, cmd=r"echo $?", times=3):
         #TODO: 1.loop may be not necessary
         for i in range(times):
-            rel = self.getResultFromCMD(cmd, w_timeout=100, s_timeout=60, handlespecialchar=True)
+            rel = self.getResultFromCMD(cmd, w_timeout=100, s_timeout=60)
             if rel[0] == 1:
                 if rel[1] == "0":
                     return (True, rel[1])
@@ -218,9 +263,13 @@ class ConnSlave(object):
         
 if __name__ == '__main__':
 
-    cs = ConnSlave("147.2.207.113", "root", "susetesting")
+    cs = ConnSlave("147.2.207.54", "root", "susetesting")
     
+    cs.scpFiles2('/tmp/test', '/tmp/')
+    
+    '''
     if cs.sshSlave(interval_time=10,try_times=30):
         rel = cs.getResultFromCMD("/tmp/test.sh")
         print rel
         cs.closeSSH()
+    '''

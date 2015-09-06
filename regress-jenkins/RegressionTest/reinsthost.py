@@ -34,6 +34,7 @@ from  pylib import ConnSlave as ConnSlave
 from  pylib import QA_TESTSET
 from  pylib import HostContorller
 
+
 #REINSTALL_CMD = '/usr/share/qa/tools/install.pl  -p http://147.2.207.1/dist/install/SLP/SLES-11-SP3-GM/x86_64/DVD1/ -t base -B'
 
 def main():
@@ -55,19 +56,25 @@ def main():
     options, _args = ins_parseparam.parse_args()
 
     # Initial environment
-    CommonOpt().cleanPKLFile()
+    CommonOpt().cleanFile(subfix="pkl")
+    CommonOpt().cleanFile(subfix="json")
     
-    #Update available host status
-    HostContorller().markHostStatus([options.rinst_mach], HOST_STATUS_FILE,
-                                    org_status=HostContorller.HOST_FREE,
-                                    cur_status=HostContorller.HOST_RUNNING)
+    ins_qaset = QA_TESTSET(options.rinst_productv, options.rinst_arch,
+                           options.rinst_mach,options.rinst_report, (feat_name, feat_desc))
 
-    # Execute re-installation host
-    ins_connslave = ConnSlave(options.rinst_mach,
-                              REINSTALL_MACHINE_USER,
-                              REINSTALL_MACHINE_PASSWD)
-    
-    ins_qaset = QA_TESTSET(options.rinst_arch, ins_connslave, (feat_name, feat_desc))
+    ins_qaset.getRepoLocation(options.rinst_project)
+    #Update available host status
+    if HostContorller().reserveHost(options.rinst_mach, HOST_STATUS_FILE, ins_qaset.report_file):
+        pass
+    else:
+        rel_msg = "Host %s is busy now, test exit." %options.rinst_mach
+        LOGGER.error(rel_msg)
+        exec_duration = CommonOpt().getDiffTime(start_time, datetime.datetime.now())
+        tc_data = ins_qaset.combineTCData(tc_name='Lock host', tc_status='failed', 
+                                 tc_duration=exec_duration, tc_output=rel_msg)
+        ts_data = ins_qaset.combineTSData(ts_name="Reserve Host", ts_tc_list=tc_data)
+        ts_data_list.extend(ts_data)
+        ins_qaset._exit(ts_data_list, flg='1vn')
 
     ts_data_list.extend(ins_qaset.sshSlave())
 
@@ -77,6 +84,7 @@ def main():
 
     rel = ins_qaset.rebootSlave()
     rel = ins_qaset.sshSlave(try_times=50, interval_time=60)
+
     rel = ins_qaset.executeCMD("uname -a")
 
     rel = ins_qaset.executeCMD("cat /etc/issue")

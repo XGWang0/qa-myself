@@ -44,11 +44,11 @@ class HostContorller(object):
         while time.time() - curr_time < 100:
             try:
                 fcntl.flock(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                LOGGER.debug("Successfully lock usable host config file")
+                return True
             except IOError, e:
                 LOGGER.warn(e)
-                return False
-            else:
-                return True
+                continue
         
         LOGGER.error("Failed to get file lock of file %s" %fp.filename)
         return False
@@ -56,55 +56,126 @@ class HostContorller(object):
     def releaseFile(self, fp):
         try:
             fcntl.flock(fp, fcntl.LOCK_UN)
+            LOGGER.debug("Successfully unlock usable host config file")
+            return True
         except Exception,e:
             print e
+            LOGGER.debug("Failed to unlock usable host config file")
             return False
-        else:
-            return True
 
     #TODO Maybe exist blocking issue
-    def markHostStatus(self, choice_host, host_status_file,
+    def getAvailableHost(self, host, host_status_file,
                        org_status=HOST_FREE, cur_status=HOST_READY):
 
         acquired_host_flag = False
+        
+        avaliable_host = ""
+
         try:
             fp = open(host_status_file, "a+")
         except IOError,e:
-            LOGGER.error("Failed to open file becuase of %s" %e)
+            LOGGER.debug("Failed to open file becuase of %s" %e)
             return ""
 
         if self.reserveFile(fp) is False:
-            LOGGER.info()
             return ""
-        
+        fp.seek(0)
         lines = fp.readlines()
-        for host in choice_host:
-            if filter(lambda x:re.search("%s\s+%s" %(host, org_status), x), lines):
-                self.modifyHostStatus(fp, lines, host, cur_status)
-                acquired_host_flag = True
-                break
+        #LOGGER.info(lines)
+        for i, line in enumerate(lines):
+            if host in line:
+                if re.search("%s\s+%s" %(host,org_status), line, re.I):
+                    LOGGER.debug("Host status : %s" %line)
+                    lines[i] = "%s %s\n" %(host, cur_status)
+                    acquired_host_flag = True
+                    avaliable_host = host
+                    break
+                else:
+                    LOGGER.debug("Host status : %s" %line)
+                    acquired_host_flag= False
+                    avaliable_host = ""
+                    break
+            else:
+                pass
+        else:
+            acquired_host_flag = True
+            avaliable_host = host
+            lines.append("%s %s\n" %(host, cur_status))
+
+        if acquired_host_flag is True:
+            self.modifyHostStatus(fp, lines)
 
         self.releaseFile(fp)
         fp.close()
-        if acquired_host_flag is True:
-            return host
+        
+        return avaliable_host
+
+    def modifyHostStatus(self, fp, file_lines):
+        
+        #LOGGER.info(("ALL LINES is ", file_lines))
+        fp.seek(0)
+        fp.truncate()
+        fp.writelines(file_lines)
+
+    def chooseHost(self, host_list, host_status_file, uuid_seed_file):
+
+        reserve_uuid = CommonOpt.generateUUID(uuid_seed_file)
+        for host in host_list:
+            avail_host = self.getAvailableHost(host.strip(), host_status_file,
+                                               HostContorller.HOST_FREE + ' ' + reserve_uuid,
+                                               HostContorller.HOST_FREE + ' ' + reserve_uuid)
+            
+            if avail_host:
+                LOGGER.info("Get available host %s" %avail_host)
+                return avail_host
+            else:
+                avail_host = self.getAvailableHost(host.strip(), host_status_file,
+                                                   HostContorller.HOST_FREE + ' ALL',
+                                                   HostContorller.HOST_FREE + ' ' + reserve_uuid)
+                if avail_host:
+                    return avail_host
+        LOGGER.warn("There is no any available host")
+        return ""     
+
+    def freeHost(self, host, host_status_file, uuid_seed_file):
+        LOGGER.info("Free host %s" %host)
+        reserve_uuid = CommonOpt.generateUUID(uuid_seed_file)
+        fh = self.getAvailableHost(host, host_status_file,
+                                   HostContorller.HOST_RUNNING + ' ' + reserve_uuid, 
+                                   HostContorller.HOST_FREE + ' ALL')
+        
+        if fh:
+            return fh
         else:
             return ""
 
-    def modifyHostStatus(self, fp, file_lines, host, status=HOST_READY):
+    def reserveHost(self, host, host_status_file, uuid_seed_file):
+        LOGGER.info("Reserve host %s" %host)
+        reserve_uuid = CommonOpt.generateUUID(uuid_seed_file)
+        fh = self.getAvailableHost(host, host_status_file,
+                                   HostContorller.HOST_FREE + ' ' + reserve_uuid,
+                                   HostContorller.HOST_RUNNING + ' ' + reserve_uuid)
         
-        l_num = 0
-        l_str = ""
-        lines = file_lines
-
-        if not filter(lambda x:host in x, lines):
-            lines.append("\n%s %s" %(host, status))
+        if fh:
+            return fh
         else:
-            for l_num, l_str in enumerate(lines):
-                if host in l_str:
-                    lines[l_num] = "%s %s\n" %(host, status)
-                    break
-        LOGGER.info(("ALL LINES is ", lines))
-        fp.seek(0)
-        fp.truncate()
-        fp.writelines(lines)
+            fh = self.getAvailableHost(host, host_status_file,
+                                       HostContorller.HOST_FREE + ' ALL',
+                                       HostContorller.HOST_RUNNING + ' ' + reserve_uuid)
+            if fh:
+                return fh
+            else:
+                return ""
+    
+    def releaseHost(self,host, host_status_file, uuid_seed_file):
+        LOGGER.info("Release host %s" %host)
+        reserve_uuid = CommonOpt.generateUUID(uuid_seed_file)
+        fh = self.getAvailableHost(host, host_status_file,
+                                   HostContorller.HOST_RUNNING + ' ' + reserve_uuid,
+                                   HostContorller.HOST_FREE + ' ' + reserve_uuid)
+        
+        if fh:
+            return fh
+        else:
+            return ""
+        

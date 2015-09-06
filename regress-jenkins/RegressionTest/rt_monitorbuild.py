@@ -58,11 +58,8 @@ class RTBuildChange(object):
         self.host_status_file = HOST_STATUS_FILE
         self.rdy_tirgger_job_file = os.path.join(self.prj_cfg_path, RT_RDY_TRIGGER_JOB_FILE)
 
-        # Initial jenkins jobs and triggered cmd
-        self.prefix_jenkins_job = options.mbuild_jjob
-        self.jenkins_job = [self.prefix_jenkins_job + "/%(arch)s/job/02_InstallHost", self.prefix_jenkins_job + "/%(arch)s/job/03_StressValidation"]
-        self.jenkins_job_with_param = [self.jenkins_job[0] + "/buildWithParameters?REPOSITORY=%(repo)s&ARCH=%(arch)s&BUILD_VER=%(build_ver)s&MACHINE=",
-                                       self.jenkins_job[1] + "/buildWithParameters?ARCH=%(arch)s&BUILD_VER=%(build_ver)s&MACHINE="]
+        self.jenkins_job = "wget -O - -q \"" + os.path.dirname(PrjPath().getJobURL()[:-1])  + "/%(arch)s/buildWithParameters?ARCH=%(arch)s&BUILD_VER=%(build_ver)s&REPORT_FILE=%(report_file)s&MACHINE="
+
         
         self.triggered_arch = ""
         self.return_code = 1
@@ -70,64 +67,50 @@ class RTBuildChange(object):
         # Instance for url operation and host controller
         self.urlpaser = URLParser()
         self.flowctrller = HostContorller()
+
+        LOGGER.info("Initial")
         self.loopCheckBuildChange(self.larch)
+        self.loopCheckBuildChange(self.rarch)
 
     def loopCheckBuildChange(self, arch_list):
         '''Traverse needed arches and mode for build change
         '''
-        for arch in filter(lambda x:x in self.hosts, arch_list):
-                
-            trigger_job_cmd = ""
+        repo = arch_list == self.larch and self.lrepo or self.rrepo
 
-            if arch in self.larch:
-                repo = self.lrepo 
-            else:
-                repo = self.rrepo
-            
-            abs_repo = os.path.join(repo, arch, "DVD1", 'media.1', 'build')
-            # Get stored data from local file
-            cmd_triggerjob_map = CommonOpt().loadData(self.rdy_tirgger_job_file) or {}
-            key_name_tirgger_job = '%s_%s' %(self.prj_name, arch)
-
-            # Get build change information
-            file_stored_last_build_chg = os.path.join(self.repo_store_path, "last_repo_file_on_%s" %arch)
-            bc = self.checkBuildChange(file_stored_last_build_chg, abs_repo)
-
-            LOGGER.info(bc)
-            #bc = (True, 'kernel-default-24983947dffdsf.rpm', '>kernel-default-24983947dffdsf.rpm<')
+        for arch in arch_list:
             LOGGER.info("Current arch is  %s" %(arch))
-            build_version = bc[2]
-
-            # Check jenkins job if is enable
-            enable_job_name = self.getEnableJenkinsJob(arch, build_version, repo)
-
-            # If build change is existent, followint operation will be done
-            if bc[0] is True:
-
-                LOGGER.info("BC:Detect build change")
-                if  enable_job_name:
-                    trigger_job_cmd = "wget -O - -q \"%s" %enable_job_name
-                    cmd_triggerjob_map[key_name_tirgger_job] = ""
-                else:
-                    LOGGER.info(StringClor().printColorString(
-                                "There is no enable job for build change triggering",
-                                StringClor.F_GRE))
-                    cmd_triggerjob_map[key_name_tirgger_job] = enable_job_name
-                
-                #Dump data to local file which it's convenients for next trigger
-                CommonOpt().dumpData(self.rdy_tirgger_job_file, cmd_triggerjob_map)
             
-            # BUild change is non-existent
-            elif bc[0] is False:
-                LOGGER.info("NBC: NO build change")
-                if enable_job_name:
-                    # If last build change is existent, the job should be tiggered
+            # Get build change information
+            bc = self.getBuildChange(repo, arch)
+            LOGGER.info(bc)
+
+            if bc[2] == "":
+                LOGGER.warn("Can not get build infomation, skip !!")
+                continue
+            build_version = bc[2]
+            for arch in [i for i in arch_list if i in self.hosts]:
+                trigger_job_cmd = ''
+
+                # Get stored data from local file
+                cmd_triggerjob_map = CommonOpt().loadData(self.rdy_tirgger_job_file) or {}
+
+                # Check jenkins job if is enable
+                key_name_tirgger_job = '%s_%s' %(self.prj_name, arch)
+                # If build change is existent, followint operation will be done
+                if bc[0] is True:
+                    report_file = CommonOpt.generateRandomStr()
+                    trigger_job_cmd = self.jenkins_job %dict(arch=arch,
+                                                             build_ver=build_version,
+                                                             report_file=report_file)
+                    LOGGER.info("BC:Detect build change")
+
+                # BUild change is non-existent
+                elif bc[0] is False:
                     if key_name_tirgger_job in cmd_triggerjob_map and cmd_triggerjob_map[key_name_tirgger_job]:
+                        trigger_job_cmd = cmd_triggerjob_map[key_name_tirgger_job]
                         LOGGER.info(StringClor().printColorString(
                                     "No build change, Try to tirgger last build change with job cmd : %s" %trigger_job_cmd,
                                     StringClor.F_GRE))
-
-                        trigger_job_cmd = cmd_triggerjob_map[key_name_tirgger_job]
 
                         cmd_triggerjob_map[key_name_tirgger_job]=""
                         CommonOpt().dumpData(self.rdy_tirgger_job_file, cmd_triggerjob_map)
@@ -135,67 +118,37 @@ class RTBuildChange(object):
                         LOGGER.info(StringClor().printColorString(
                                     "No build change or last build change needs to be triggered",
                                     StringClor.F_GRE))
-                        
-                else:
-                    LOGGER.info(StringClor().printColorString('No enable job to be triggered',
-                                StringClor.F_GRE))
 
-            self.triggerJob(arch, trigger_job_cmd, cmd_triggerjob_map, file_stored_last_build_chg, bc)
-            LOGGER.info("-"*80 + '\n'*2)   
+                self.triggerJob(arch, trigger_job_cmd, key_name_tirgger_job, cmd_triggerjob_map)
+                LOGGER.info("-"*50)
 
-    def getEnableJenkinsJob(self, arch, build_ver, install_repo):
-        ''' Return enable jobs with parameters
-        '''
-        for (i, job) in enumerate(self.jenkins_job):
-            if JenkinsAPI().checkBuildable(job %dict(arch=arch)) is True:
-                break
-        else:
-            LOGGER.warn("There is not enable job can be triggered")
-            return ""
-        
-        install_repo = os.path.join(install_repo, arch, 'dvd1')
-        if i == 0:
-            return self.jenkins_job_with_param[i] %dict(arch=arch,
-                                                        #repo=self.repo,
-                                                        build_ver=build_ver,
-                                                        repo=install_repo)
-        else:
-            return self.jenkins_job_with_param[i] %dict(arch=arch,
-                                                        build_ver=build_ver)
+    def getBuildChange(self, repo, arch):
+        url = os.path.join(repo, arch, 'dvd1/media.1/build')
+        abs_last_file = os.path.join(self.repo_store_path, "last_repo_file_on_%s" %arch)
+        return self.checkBuildChange(abs_last_file, url)
 
-    def triggerJob(self, arch, cmd, reloaded_data, build_chg_last_bc, bc):
-        key_name_tirgger_job = '%s_%s' %(self.prj_name, arch)
+    def triggerJob(self, arch, cmd, cmd_key, cmd_map):
         if cmd:
-            fh = self.flowctrller.markHostStatus(self.hosts[arch], self.host_status_file,
-                                                 org_status=HostContorller.HOST_FREE,
-                                                 cur_status=HostContorller.HOST_RUNNING)
-            if fh:
-                LOGGER.info("Get available host : %s" %fh)
+            report_file = re.search('REPORT_FILE=(\S+)&', cmd, re.I).groups()[0]
+            
+            fh = self.flowctrller.chooseHost(self.hosts[arch], self.host_status_file, report_file)
 
+            if fh:   
                 self.return_code = 0
                 cmd = cmd + fh + "\""
+                LOGGER.debug("Trigger job %s" %cmd)
 
-                LOGGER.info("Trigger job %s" %cmd)
+                # Remove old build change info from trigger job file
+                cmd_map[cmd_key]=""
                 os.system(cmd)
             else:
                 LOGGER.info("NO available host %s for triggering, dump data to file" %str(self.hosts[arch]))
-                reloaded_data[key_name_tirgger_job]=cmd
-                CommonOpt().dumpData(self.rdy_tirgger_job_file, reloaded_data)
-            
-            CommonOpt().dumpData(build_chg_last_bc, bc[2])
-            self.return_code = 0
+                cmd_map[cmd_key]=cmd
+            CommonOpt().dumpData(self.rdy_tirgger_job_file, cmd_map)
         else:
-            pass
-
-        self.triggered_arch = self.triggered_arch and  self.triggered_arch + ',%s' %arch or arch
+            LOGGER.info("No trigger build")
 
 
-    def getBuildVersion(self, build_output, mode='default'):
-        rei =  re.search('>%s-(\S+?).rpm<' %'kernel-%s' %mode, build_output, re.I)
-        if rei:
-            return  rei.groups()[0].strip()
-        return "Not-match-build-version-%s" %(time.time())
-    
     def checkBuildChange(self, last_file, url):
 
         last_content = CommonOpt().loadData(last_file)
@@ -207,7 +160,7 @@ class RTBuildChange(object):
             if ''.join(last_content).strip() == curr_content.strip():
                 return (False, last_content, curr_content)
             else:
-                #CommonOpt().dumpData(last_file, curr_content)
+                CommonOpt().dumpData(last_file, curr_content)
                 return (True, last_content, curr_content)
 
 

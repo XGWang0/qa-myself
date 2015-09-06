@@ -24,23 +24,70 @@
 from urllib2 import urlopen, HTTPError
 import json
 
-
 from constantvars import *
 from stringcolor import StringColor
 from jsongenerator import JsonGenerator
 from urloperation import URLParser
 from jenkinsapi import JenkinsAPI
 from flowcontroller import HostContorller
+from conslaves import ConnSlave
+from parameterparser import  RegConfigParser as ParseConfig
 
 class QA_TESTSET(object):
 
-    def __init__(self, arch, ins_conslave, feat_info):
+    def __init__(self, product, arch, mach, report, feat_info):
+        
+        LOGGER.debug("report %s" %report)
+        #pc = ParseConfig()
+        self.product = product
+        self.productv = CommonOpt().convertPrjName(product)
         self.arch = arch
-        self.ins_conslave = ins_conslave
+        self.report_tuple = self.getReportFile(report)
+        self.report_file = self.report_tuple[1]
+        self.report_json_file = self.report_tuple[0] + '.json'
+        self.report_pkl_file = self.report_tuple[0] + '.pkl'
+        LOGGER.info(self.report_json_file)
+        LOGGER.info(self.report_pkl_file)
+        self.ins_conslave = ConnSlave(mach,
+                                      REINSTALL_MACHINE_USER,
+                                      REINSTALL_MACHINE_PASSWD)
         self.prefix_feat_name = feat_info[0]
         self.feat_desc = feat_info[1] + '\n'*2 + 'Test Machine :%s' %self.ins_conslave.slave_addr
 
         self.start_time = datetime.datetime.now()
+
+
+    def getRepoLocation(self, prj_name):
+        pc = ParseConfig()
+        config_productv =  self.product.replace('SLE','SLES')
+
+        if prj_name == 'KOTD':
+            configfile = KOTD_REF_TEST_CFG_FILE
+            self.larch = pc.convertItem(pc.getItem(configfile, config_productv, 'arch'))
+            self.rarch = []
+        elif prj_name == 'RT':
+            configfile = RT_REF_TEST_CFG_FILE
+            self.larch = pc.convertItem(pc.getItem(configfile, config_productv, 'larch'))
+            self.rarch = pc.convertItem(pc.getItem(configfile, config_productv, 'rarch'))
+
+        LOGGER.debug("Config file is %s" %configfile)      
+        LOGGER.debug("local arch is %s" %'|'.join(self.larch))
+        LOGGER.debug("remote arch is %s" %'|'.join(self.rarch))
+        
+
+    def getReportFile(self, report_file):
+        if report_file:
+            dirname, base_file = os.path.split(report_file.strip())
+            LOGGER.info("%s %s" %(dirname, base_file))
+            sufix1 =  base_file.split("_")[-1]
+            if sufix1:
+                return (report_file, sufix1)
+            else:
+                sufix1 = base_file + CommonOpt.generateRandomStr()
+                return (os.path.join(dirname, sufix1), sufix1)
+        else:
+            sufix1 = CommonOpt.generateRandomStr()
+            return (os.path.join('/tmp', sufix1), sufix1)
 
     def executeCMD(self, cmd, chk_posit=True, w_timeout=100, s_timeout=5, title="Execute CMD",chk_reltime=True):
         rel = self.ins_conslave.getResultFromCMD(cmd, handlespecialchar=True, w_timeout=w_timeout,
@@ -65,7 +112,7 @@ class QA_TESTSET(object):
                     LOGGER.info(
                                 StringColor().printColorString(
                                     "Return code $? is [ %s]" %rel1[1],
-                                    StringColor.F_RED))
+                                    StringColor.F_GRE))
                 return (rel1[0], rel[1])
             else:
                 if rel1[0] is False:
@@ -131,8 +178,11 @@ class QA_TESTSET(object):
             
     def warpTCandTSdata(self, display_msg, tc_name, tc_status, ts_name):
         exec_duration = CommonOpt().getDiffTime(self.start_time, datetime.datetime.now())
-        LOGGER.info(
-            StringColor().printColorString(display_msg, StringColor.F_RED))
+        if tc_status == 'passed':
+            LOGGER.info(StringColor().printColorString(display_msg, StringColor.F_GRE))
+        else:
+            LOGGER.info(
+                StringColor().printColorString(display_msg, StringColor.F_RED))
         tc_data = self.combineTCData(tc_name=tc_name, tc_status=tc_status, 
                                      tc_duration=exec_duration, tc_output=display_msg)
         ts_data = self.combineTSData(ts_name=ts_name, ts_tc_list=tc_data)
@@ -151,8 +201,8 @@ class QA_TESTSET(object):
         if URLParser().checkURLPath(tmp_url):
             return tmp_url
         else:
-            rel_msg = "Re-installation tool exists on slave"
-            ts_data = self.warpTCandTSdata(rel_msg, 'Run shell cmd', 'passed', "Check re-installation tools")
+            rel_msg = "Re-install tool failure, somes repo does not exist!!"
+            ts_data = self.warpTCandTSdata(rel_msg, 'Run shell cmd', 'failed', "Check re-installation tools")
             self._exit(ts_data)  
 
     def installRITools(self):
@@ -171,14 +221,29 @@ class QA_TESTSET(object):
             ts_data = self.warpTCandTSdata(rel_msg, 'Run shell cmd', 'failed', "Check re-installation tools")
             self._exit(ts_data)
 
-        qa_head_repo =  os.path.join(PREFIX_QA_HEAD_REPO,
-                                     PrjPath().getProductVersion().replace("SLES", "SLE"))
+        rel = self.executeCMD('cat /etc/issue', w_timeout=180, s_timeout=20, title="Get Os Info")
+        
+        local_os_info = CommonOpt().getOSPrdVerAndArch(rel[1])
+        LOGGER.info(("local info ", local_os_info))
+        
+        qa_head_repo =  os.path.join(PREFIX_QA_HEAD_REPO, local_os_info[0])
+                                     #PrjPath().getProductVersion().replace("SLES", "SLE"))
         qa_head_repo_nike = 'qa_head_' + str(random.randint(10000,99999))
         self.addRepo2Host(qa_head_repo, qa_head_repo_nike)
-        
-        qa_prd_sdk_repo =  PREFIX_PRODUCT_SDK_REPO %dict(
-            prd_name=PrjPath().getProductVersion().replace("SLES", "SLE"),
-            arch=self.arch)
+
+        if local_os_info[1] in self.larch:
+            product_sdk_repo = PREFIX_PRODUCT_SDK_L_REPO
+        else:
+            product_sdk_repo = PREFIX_PRODUCT_SDK_R_REPO
+
+        qa_prd_sdk_repo =  product_sdk_repo %dict(prd_name=local_os_info[0],
+                                                  arch=local_os_info[1])
+        '''
+        qa_prd_sdk_repo =  PREFIX_PRODUCT_SDK_L_REPO %dict(prd_name=local_os_info[0],
+                                                           arch=local_os_info[1])
+        '''
+            #prd_name=PrjPath().getProductVersion().replace("SLES", "SLE"),
+            #arch=self.arch)
         qa_prd_sdk_repo_nike = 'qa_prd_sdk_' + str(random.randint(10000,99999))
 
         vaild_prd_sdk_repo = self.getValidURL(qa_prd_sdk_repo)
@@ -191,7 +256,7 @@ class QA_TESTSET(object):
 
             self._exit(ts_data)
 
-        self.installPKG(qa_head_repo_nike, 'hamsta')
+        self.installPKG(qa_head_repo_nike, 'qa_tools')
 
         self.executeCMD(chkinstall_tool_cmd, w_timeout=1800, s_timeout=20, title="Check re-installation tools")
         rel_msg = "Re-installation tool has been installed"
@@ -200,7 +265,13 @@ class QA_TESTSET(object):
         
     def installSlave(self, repo, w_timeout=1800, s_timeout=20):
 
-        reins_host_cmd = REINSTALL_MACHINE_CMD %dict(repo=repo,)
+        LOGGER.debug(URLParser().getValidURL(repo))
+        reins_host_cmd = REINSTALL_MACHINE_CMD %dict(repo=self.getValidURL(repo))
+        
+        # File systerm btrfs is only used on SLE-12 and up version
+        if 'SLE-12' in self.product:
+            reins_host_cmd = reins_host_cmd + ' -f btrfs'
+        
         LOGGER.info(StringColor().printColorString(
                     "Execute reinstallation host cmd. cmd :[%s]" %reins_host_cmd, StringColor.F_BLU))
         self.executeCMD(reins_host_cmd, w_timeout=1800, s_timeout=s_timeout, title="Reinstall slave")
@@ -273,8 +344,9 @@ class QA_TESTSET(object):
         
         # Add repo to zypper 
         #self.addRepo2Host(qa_repo)
-        qa_repo = os.path.join(qa_repo, PrjPath().getProductVersion().replace("SLES", "SLE"))
+        #qa_repo = os.path.join(qa_repo, PrjPath().getProductVersion().replace("SLES", "SLE"))
         
+        qa_repo = os.path.join(qa_repo, self.productv)
         LOGGER.info(StringColor().printColorString("Add repo to slave.", StringColor.F_BLU))
         addrepo_cmd = PREFIX_ADD_REPO_CMD %dict(repo_addr=qa_repo,
                                                 repo_nike=TS_STRESS_VALID_NICK)
@@ -320,6 +392,33 @@ class QA_TESTSET(object):
         
         #rel_list = [{'name':"Execute Test Suite", 'status':True, 'output':ret_msg, 'error_msg':None, 'url':None}]
         return ts_data        
+
+    def genRTConfig(self, testsuites):
+        
+        gen_rt_cfg_cmd = '''mkdir -p /root/qaset/;echo -e "SQ_TEST_RUN_LIST=(" > /root/qaset/config'''
+        self.executeCMD(gen_rt_cfg_cmd, w_timeout=600, s_timeout=30, title="Generate Test Suites")
+        for testsuite in testsuites.split(","):
+            add_ts_cmd = '''echo -e "    %s" >> /root/qaset/config''' %testsuite
+            self.executeCMD(add_ts_cmd, w_timeout=600, s_timeout=30, title="Generate Test Suites")
+
+        self.executeCMD("echo -e \")\" >> /root/qaset/config", w_timeout=600, s_timeout=30, title="Generate Test Suites")
+        #gen_rt_cfg_cmd = '''mkdir -p /root/qaset/;echo -e "SQ_TEST_RUN_LIST=(%s)" > /root/qaset/config''' %(testsuites)
+        '''
+        LOGGER.info(StringColor().printColorString(
+                    "Generate regression test config file. cmd :[%s]" %gen_rt_cfg_cmd, StringColor.F_BLU))
+        self.executeCMD(gen_rt_cfg_cmd, w_timeout=600, s_timeout=30, title="Generate Test Suites")
+        '''
+        exec_duration = CommonOpt().getDiffTime(self.start_time, datetime.datetime.now())
+
+        ret_msg = "Successfully generate special testsuites list."
+        LOGGER.info(StringColor().printColorString(ret_msg, StringColor.F_BLU))
+
+        tc_data = self.combineTCData(tc_name="Generate special test suites", tc_status='passed', 
+                                     tc_duration=exec_duration, tc_output=ret_msg)
+        ts_data = self.combineTSData(ts_name="Generate Test Suites", ts_tc_list=tc_data)
+
+        #rel_list = [{'name':"Reinstall slave", 'status':True, 'output':ret_msg, 'error_msg':None, 'url':None}]
+        return ts_data
     
     def executeTS(self, reset_cmd=TS_QASET_RESET_CMD, ts_run=TS_STRESS_VALID_RUN_NAME,
                   flow_file=TS_STRESS_VALID_MONITOR_FILE, timeout=20):
@@ -404,53 +503,86 @@ class QA_TESTSET(object):
         self._exit(ts_data)
         '''
 
-    def checkFile(self, file_name=TS_STRESS_VALID_DONE_FILE, allow_reboot=True,
+    def checkScreen(self, screen_name, times=3):
+        for i in range(times):
+            chktsproc_cmd = "screen -ls"
+            LOGGER.info(StringColor().printColorString(
+                "Monitor testsuite process. CMD:[%s]" %chktsproc_cmd, StringColor.F_BLU))
+            rel = self.ins_conslave.getResultFromCMD(chktsproc_cmd, w_timeout=1800, s_timeout=30)
+            if rel[0] == 1:
+                #tc_run_name = os.path.basename(screen_name).split("-")[0]
+                LOGGER.info(rel[1])
+                exec_duration = CommonOpt().getDiffTime(self.start_time, datetime.datetime.now())
+                if re.search(screen_name, rel[1]):
+                    ret_msg = "Test suite is running"
+                    tc_status = 'passed'
+                    LOGGER.info(StringColor().printColorString(ret_msg,  StringColor.F_GRE))
+                    break
+                else:
+                    LOGGER.info(StringColor().printColorString("This test is dropped down or can not be launched, try again", StringColor.F_GRE))
+            time.sleep(60)
+        else:
+            tc_status = 'failed'
+            ret_msg = "Test suite is not launched successfully, due to no screen"
+            LOGGER.info(StringColor().printColorString(ret_msg,  StringColor.F_GRE))
+
+        tc_data = self.combineTCData(tc_name="Check TestSuite Screen", tc_status=tc_status, 
+                                         tc_duration=exec_duration, tc_output=ret_msg)
+        ts_data = self.combineTSData(ts_name="Check TestSuite Run", ts_tc_list=tc_data)
+
+        return (tc_status == 'passed' and True or False, ts_data)
+
+    def checkFile(self, ts_run, file_name=TS_STRESS_VALID_DONE_FILE, allow_reboot=True,
                   timeout=10, interval_time=10, ept_times=20):
-        
+
         exception_times = ept_times
-        
+        tc_run_name = os.path.basename(ts_run).split("-")[0]
+
         chkTSstatus_cmd = "test -e %s" %file_name
         LOGGER.info(StringColor().printColorString(
             "Check test suite running status. CMD:[%s]" %chkTSstatus_cmd, StringColor.F_BLU))
-        
 
         s_time = time.time()
         while time.time() - s_time < timeout:
-            rel = self.ins_conslave.getResultFromCMD(chkTSstatus_cmd, w_timeout=20, s_timeout=60)
-            exec_duration = CommonOpt().getDiffTime(self.start_time, datetime.datetime.now())
-            if rel[0] == 1 :
-                rel1 = self.ins_conslave.getReturnCode()
-                if rel1[0] is False:
-                    time.sleep(interval_time)
-                    continue
-                elif rel1[0] is None:
+            rel = self.checkScreen(tc_run_name)
+            if rel[0] is False:
+                return rel[1]
+            else:
+                rel = self.ins_conslave.getResultFromCMD(chkTSstatus_cmd, w_timeout=20, s_timeout=60)
+                exec_duration = CommonOpt().getDiffTime(self.start_time, datetime.datetime.now())
+                if rel[0] == 1 :
+                    rel1 = self.ins_conslave.getReturnCode()
+                    if rel1[0] is False:
+                        time.sleep(interval_time)
+                        continue
+                    elif rel1[0] is None:
+                        self.sshSlave(try_times=15, interval_time=20)
+                    else:
+                        ret_msg = "Test suite [%s] done on slave" %TS_STRESS_VALID_RUN_NAME
+                        LOGGER.info(StringColor().printColorString(ret_msg, StringColor.F_BLU))
+    
+                        tc_data = self.combineTCData(tc_name="Inspect testsuite process", tc_status='passed', 
+                                                     tc_duration=exec_duration, tc_output=ret_msg)
+                        ts_data = self.combineTSData(ts_name="Check testsuite done", ts_tc_list=tc_data)
+    
+                        #rel_list = [{'name':"Verify result file", 'status':True, 'output':ret_msg, 'error_msg':None, 'url':None}]
+                        return ts_data
+                elif rel[0] == 0:
                     self.sshSlave(try_times=15, interval_time=20)
                 else:
-                    ret_msg = "Test suite [%s] done on slave" %TS_STRESS_VALID_RUN_NAME
-                    LOGGER.info(StringColor().printColorString(ret_msg, StringColor.F_BLU))
-
-                    tc_data = self.combineTCData(tc_name="Inspect testsuite process", tc_status='passed', 
-                                                 tc_duration=exec_duration, tc_output=ret_msg)
-                    ts_data = self.combineTSData(ts_name="Check testsuite done", ts_tc_list=tc_data)
-
-                    #rel_list = [{'name':"Verify result file", 'status':True, 'output':ret_msg, 'error_msg':None, 'url':None}]
-                    return ts_data
-            elif rel[0] == 0:
-                self.sshSlave(try_times=15, interval_time=20)
-            else:
-                if exception_times > 0:
-                    time.sleep(interval_time)
-                    exception_times = ept_times - 1
-                else:
-                    LOGGER.error(StringColor().printColorString(("Failed to get normal result "
-                                                               "when executes cmd %s" %chkTSstatus_cmd),
-                                                                StringColor.F_RED))                
-                    tc_data = self.combineTCData(tc_name="Inspect testsuite process", tc_status='failed', 
-                                                 tc_duration=exec_duration, tc_output=rel[1])
-                    ts_data = self.combineTSData(ts_name="Check testsuite done", ts_tc_list=tc_data)
-    
-                    #rel_list = [{'name':"Verify result file", 'status':False, 'output':None, 'error_msg':rel[1], 'url':None}]
-                    exit(ts_data)
+                    if exception_times > 0:
+                        time.sleep(interval_time)
+                        exception_times = ept_times - 1
+                    else:
+                        LOGGER.error(StringColor().printColorString(("Failed to get normal result "
+                                                                   "when executes cmd %s" %chkTSstatus_cmd),
+                                                                    StringColor.F_RED))                
+                        tc_data = self.combineTCData(tc_name="Inspect testsuite process", tc_status='failed', 
+                                                     tc_duration=exec_duration, tc_output=rel[1])
+                        ts_data = self.combineTSData(ts_name="Check testsuite done", ts_tc_list=tc_data)
+        
+                        #rel_list = [{'name':"Verify result file", 'status':False, 'output':None, 'error_msg':rel[1], 'url':None}]
+                        exit(ts_data)
     
         to_msg = "Test suite did not complete whole test within %ds !" %timeout
         LOGGER.error(StringColor().printColorString(to_msg, StringColor.F_RED))
@@ -471,6 +603,8 @@ class QA_TESTSET(object):
         rel = self.ins_conslave.getResultFromCMD(get_submissionid_cmd, 
                                                  handlespecialchar=True,
                                                  w_timeout=50, s_timeout=60)
+        LOGGER.info(StringColor().printColorString(
+            "Submission id is :[%s]" %rel[1], StringColor.F_BLU))        
         rel_msg = "\n[CMD] :%s\n" %get_submissionid_cmd + '-'*80 + "\n%s" %rel[1]
         exec_duration = CommonOpt().getDiffTime(self.start_time, datetime.datetime.now())
         ts_submission_url = ''
@@ -492,7 +626,7 @@ class QA_TESTSET(object):
            
         get_file_cmd = "ls %s*.%s" %(folder, postfix)
         LOGGER.info(StringColor().printColorString(
-                        "Check test suite running status. CMD:[%s]" %get_file_cmd,
+                        "Get test suite running status. CMD:[%s]" %get_file_cmd,
                         StringColor.F_BLU))
         rel = self.executeCMD(get_file_cmd, w_timeout=1800, s_timeout=20, title='Traverse Log')
 
@@ -532,7 +666,7 @@ class QA_TESTSET(object):
         tmp_data_map['ts_tc_list'] = ts_tc_list
         tmp_data_map['ts_tags'] = ts_tags
         tmp_data_map['ts_url'] = ts_url
-        LOGGER.info(("TS_list", ts_tc_list))
+        LOGGER.debug(("TS_list", ts_tc_list))
         if ts_tc_list:
             passed_tc_num = len(filter(lambda x: re.search('passed',x['tc_status'], re.I), ts_tc_list)) / float(len(ts_tc_list))
             failed_tc_num = len(filter(lambda x:re.search('(failed|timeout)',x['tc_status'],re.I), ts_tc_list)) / float(len(ts_tc_list))
@@ -600,7 +734,7 @@ class QA_TESTSET(object):
 
     def chkCurrBuildCause(self):
         build_api_json = PrjPath().getBuildURL() + '/api/json'
-        LOGGER.info(build_api_json)
+        LOGGER.debug(build_api_json)
         try:
             req = urlopen(build_api_json)
             res = req.read()
@@ -630,15 +764,21 @@ class QA_TESTSET(object):
                                  "result.json")
         ins_jg = JsonGenerator(json_file)
         
-        dump_file_name = PREFIX_STORE_FILE_NAME %self.arch
+        #dump_file_name = PREFIX_STORE_FILE_NAME %self.arch
+        abs_file_path = self.report_pkl_file
+        '''
         abs_file_path = os.path.join(PrjPath().getArchLevelPath(),
                                      dump_file_name)
+        '''
+        LOGGER.debug("PKL file %s" %abs_file_path)
         # Get dump data file path
+        '''
         if self.chkCurrBuildCause() is True:
             os.path.exists(abs_file_path) and os.remove(abs_file_path)
         else:
             lastscen_data = CommonOpt().loadData(abs_file_path)
-
+        '''
+        lastscen_data = CommonOpt().loadData(abs_file_path)
         # Analyze data and generate json file
         for i in rel:
             scen_name = i['ts_name']
@@ -648,7 +788,7 @@ class QA_TESTSET(object):
             scen_rate = i['ts_rate']
 
             for j in scen_step:
-                LOGGER.info(j)
+                LOGGER.debug(j)
                 step_name = j['tc_name']
                 step_url = j['tc_url']
                 step_status = j['tc_status']
@@ -671,8 +811,11 @@ class QA_TESTSET(object):
                 pass
             elif flg == '1v1':
                 format_str = '[{0}] - [TSuite: {1:<15}] - Arch:{2} for {3}'
-                feat_name = format_str.format(self.prefix_feat_name, scen_name,
-                                              self.arch.upper(), PrjPath().getProductVersion())
+                feat_name = format_str.format(self.prefix_feat_name,
+                                              scen_name,
+                                              self.arch.upper(),
+                                              self.productv)
+                                              #PrjPath().getProductVersion())
                 feat_desc = self.feat_desc + '\n\nStatus Rate: %s' %scen_rate
                 ins_jg.addFeature(feat_name=feat_name, 
                                   feat_desc=feat_desc,
@@ -683,13 +826,17 @@ class QA_TESTSET(object):
         #scen_data.extend(ins_jg.scen_data)
         if flg == '1vn':
             format_str = '[{0}] - Arch:{1} for {2}'
-            feat_name = format_str.format(self.prefix_feat_name, self.arch.upper(),
-                                          PrjPath().getProductVersion())
+            feat_name = format_str.format(self.prefix_feat_name,
+                                          self.arch.upper(),
+                                          self.productv)
+                                          #PrjPath().getProductVersion())
 
             ins_jg.addFeature(feat_name=feat_name, 
                               feat_desc=self.feat_desc, feat_elements=ins_jg.scen_data)
         lastscen_data.extend(ins_jg.feat_data)
-        ins_jg.generateJsonFile(lastscen_data)
+        ins_jg.generateJsonFile(json_file, lastscen_data)
+        LOGGER.debug("Json file is %s" %self.report_json_file)
+        ins_jg.generateJsonFile(self.report_json_file, lastscen_data)
         
         # Store data  to local disk
     
@@ -699,10 +846,7 @@ class QA_TESTSET(object):
 
         return_code = 0
         self.createJsonFile(rel, flg)
-
-        LOGGER.info(StringColor().printColorString("---------Test End -----------"  ,
-                                                  StringColor.HIGLIG))
-        
+       
         #Traverse test case info , "failed" status in any test case, will cause exit with non-zeron value
         for ts in rel:
             for tc in ts['ts_tc_list']:
@@ -711,31 +855,57 @@ class QA_TESTSET(object):
                     break
             if return_code == 1:
                 break
-        LOGGER.info(self.ins_conslave.ssh.isalive())
+        
+        if self.ins_conslave.ssh is not None:
+            #LOGGER.debug(self.ins_conslave.ssh.isalive())
+            self.ins_conslave.closeSSH()
 
-        self.ins_conslave.closeSSH()
-
-        if JenkinsAPI().checkDownStreamProject(PrjPath().getJobURL()) is False:
-            HostContorller().markHostStatus([self.ins_conslave.slave_addr], HOST_STATUS_FILE,
-                                                HostContorller.HOST_RUNNING, HostContorller.HOST_FREE)
-        else:
+        if JenkinsAPI().checkCauseType(PrjPath().getBuildURL()) is True:
+            LOGGER.debug("This build is caused by other job triggering automatically")
+            '''
+            if JenkinsAPI().checkDownStreamProject(PrjPath().getJobURL()) is False:
+                LOGGER.info("This build\'s downstream job is unexistent or disable")
+                HostContorller().freeHost(self.ins_conslave.slave_addr, HOST_STATUS_FILE, self.report_file)
+            else:
+                LOGGER.info("This build\'s downstream job is enable")
+            '''
             if return_code == 1:
                 if self.prefix_feat_name not in ['US','KR']:
-                    HostContorller().markHostStatus([self.ins_conslave.slave_addr], HOST_STATUS_FILE,
-                                                    HostContorller.HOST_RUNNING, HostContorller.HOST_FREE)
-        
-        LOGGER.info("FIle path is %s" %HOST_STATUS_FILE)              
+                    HostContorller().freeHost(self.ins_conslave.slave_addr, HOST_STATUS_FILE, self.report_file)
+                else:
+                    HostContorller().releaseHost(self.ins_conslave.slave_addr, HOST_STATUS_FILE, self.report_file)
+            else:
+                HostContorller().releaseHost(self.ins_conslave.slave_addr, HOST_STATUS_FILE, self.report_file)
+        else:
+            LOGGER.debug("This build is caused by user in manual")
+            HostContorller().freeHost(self.ins_conslave.slave_addr, HOST_STATUS_FILE,self.report_file)
+            '''
+            if return_code == 1:
+                if self.prefix_feat_name not in ['US','KR']:
+                    HostContorller().releaseHost(self.ins_conslave.slave_addr, HOST_STATUS_FILE, self.report_file)
+            '''
+        LOGGER.debug("FIle path is %s" %HOST_STATUS_FILE)              
 
+        LOGGER.info(StringColor().printColorString("---------Test End -----------"  ,
+                                                   StringColor.HIGLIG))
         sys.exit(return_code)
 
 class Install_Kernel(QA_TESTSET):
     
-    def __init__(self, arch, ins_conslave, feat_info, pkg_name):
-        super(Install_Kernel, self).__init__(arch, ins_conslave, feat_info)
+    def __init__(self, options, feat_info, pkg_name):
+        
+        self.kotd_productv = options.kotd_productv
+        self.kotd_arch = options.kotd_arch
+        self.kotd_mach = options.kotd_mach
+        self.kotd_report = options.kotd_report
+        self.kotd_kelrepo = options.kotd_kernelrepo
+        self.kotd_kernel = options.kotd_kernel
+        
+        super(Install_Kernel, self).__init__(self.kotd_productv, self.kotd_arch, 
+                                             self.kotd_mach, self.kotd_report, feat_info)
         self.pkg_name = pkg_name
     
     def getKernelPkgName(self, repo, pkg_prefix="kernel-default", times=3):
-
 
         while times -1 > 0:
             try:

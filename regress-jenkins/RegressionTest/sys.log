@@ -1,14 +1,24 @@
-Tue, 14 Jul 2015 18:24:02 suselogging.py[line:62] [28575] WARNING | URL [http://147.2.207.1/dist/install/SLP/SLE-12-SP1-Server-LATEST/x86_64/DVD1/media.1/build] HTTP Error 404: Not Found
-Tue, 14 Jul 2015 18:24:02 suselogging.py[line:57] [28575] INFO   | Try to convert url to http://147.2.207.1/dist/install/SLP/SLE-12-SP1-Server-LATEST/x86_64/dvd1/media.1/build
-Tue, 14 Jul 2015 18:24:02 suselogging.py[line:57] [28575] INFO   | (False, 'SLE-12-SP1-Server-DVD-x86_64-Build2476\n', 'SLE-12-SP1-Server-DVD-x86_64-Build2476\n')
-Tue, 14 Jul 2015 18:24:02 suselogging.py[line:57] [28575] INFO   | Current arch is  x86_64
-Tue, 14 Jul 2015 18:24:02 suselogging.py[line:57] [28575] INFO   | Job http://147.2.207.67:8080/job/REGRESSIONTEST/job/SLES-12-SP1/job//x86_64/job/02_InstallHost/api/json?pretty=true/&tree=buildable is True
-Tue, 14 Jul 2015 18:24:02 suselogging.py[line:57] [28575] INFO   | NBC: NO build change
-Tue, 14 Jul 2015 18:24:02 suselogging.py[line:57] [28575] INFO   | [1;32;47mNo build change, Try to tirgger last build change with job cmd : [0m
-Tue, 14 Jul 2015 18:24:02 suselogging.py[line:57] [28575] INFO   | ('ALL LINES is ', ['\n', '147.2.207.54 RUNNING\n', '147.2.207.1 RUNNING', '\n147.2.207.2 RUNNING'])
-Tue, 14 Jul 2015 18:24:02 suselogging.py[line:57] [28575] INFO   | Get available host : 147.2.207.2
-Tue, 14 Jul 2015 18:24:02 suselogging.py[line:57] [28575] INFO   | Trigger job wget -O - -q "http://147.2.207.67:8080/job/REGRESSIONTEST/job/SLES-12-SP1/job//x86_64/job/02_InstallHost/buildWithParameters?REPOSITORY=http://147.2.207.1/dist/install/SLP/SLE-12-SP1-Server-LATEST/x86_64/dvd1&ARCH=x86_64&BUILD_VER=SLE-12-SP1-Server-DVD-x86_64-Build2476
-&MACHINE=147.2.207.2"
-Tue, 14 Jul 2015 18:24:02 suselogging.py[line:57] [28575] INFO   | --------------------------------------------------------------------------------
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:57] [3309] INFO   | Initial
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:57] [3309] INFO   | Current arch is  x86_64
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:57] [3309] INFO   | (False, 'SLE-12-Server-DVD-x86_64-Build0951', 'SLE-12-Server-DVD-x86_64-Build0951')
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:57] [3309] INFO   | [1;32;47mNo build change, Try to tirgger last build change with job cmd : wget -O - -q "http:/x86_64/buildWithParameters?ARCH=x86_64&BUILD_VER=SLE-12-Server-DVD-x86_64-Build0951&REPORT_FILE=DmvVIhyT3KtZCXW8f025pgucLoaHzN&MACHINE=[0m
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:52] [3309] DEBUG  | UUID : dc66ac50-ed7d-542f-a5ef-2da754494db0
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:52] [3309] DEBUG  | Successfully lock usable host config file
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:52] [3309] DEBUG  | Host status : 147.2.207.1 FREE 0f2830a5-f97c-5b38-b3e2-412178ca7577
 
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:52] [3309] DEBUG  | Successfully unlock usable host config file
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:52] [3309] DEBUG  | Successfully lock usable host config file
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:52] [3309] DEBUG  | Host status : 147.2.207.1 FREE 0f2830a5-f97c-5b38-b3e2-412178ca7577
 
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:52] [3309] DEBUG  | Successfully unlock usable host config file
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:52] [3309] DEBUG  | Successfully lock usable host config file
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:52] [3309] DEBUG  | Successfully unlock usable host config file
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:57] [3309] INFO   | Get available host 147.2.207.2
+Wed, 05 Aug 2015 10:54:52 suselogging.py[line:52] [3309] DEBUG  | Trigger job wget -O - -q "http:/x86_64/buildWithParameters?ARCH=x86_64&BUILD_VER=SLE-12-Server-DVD-x86_64-Build0951&REPORT_FILE=DmvVIhyT3KtZCXW8f025pgucLoaHzN&MACHINE=147.2.207.2"
+Wed, 05 Aug 2015 10:54:53 suselogging.py[line:57] [3309] INFO   | --------------------------------------------------
+Wed, 05 Aug 2015 10:54:53 suselogging.py[line:57] [3309] INFO   | Current arch is  i586
+Wed, 05 Aug 2015 10:54:53 suselogging.py[line:62] [3309] WARNING | URL [http://147.2.207.1/dist/install/SLP/SLE-12-Server-LATEST/i586/dvd1/media.1/build] HTTP Error 404: Not Found
+Wed, 05 Aug 2015 10:54:53 suselogging.py[line:57] [3309] INFO   | Try to convert url to http://147.2.207.1/dist/install/SLP/SLE-12-Server-LATEST/i586/DVD1/media.1/build
+Wed, 05 Aug 2015 10:54:53 suselogging.py[line:62] [3309] WARNING | URL [http://147.2.207.1/dist/install/SLP/SLE-12-Server-LATEST/i586/DVD1/media.1/build] HTTP Error 404: Not Found
+Wed, 05 Aug 2015 10:54:53 suselogging.py[line:57] [3309] INFO   | (False, [], '')
+Wed, 05 Aug 2015 10:54:53 suselogging.py[line:62] [3309] WARNING | Can not get build infomation, skip !!

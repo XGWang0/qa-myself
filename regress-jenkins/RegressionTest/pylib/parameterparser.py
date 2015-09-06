@@ -48,11 +48,11 @@ class CMDParamParser(optparse.OptionParser):
         self.add_option("-r", "--remoterepo", action="store", type="string",
                         dest="mbuild_mrepo",
                         help=("Input a remote repo address."))
-
+        '''
         self.add_option("-j", "--jobname", action="store", type="string",
                         dest="mbuild_jjob",
                         help=("Input jenkins job name that will be triggered"))
-        
+        '''
         self.add_option("-p", "--prjname", action="store", type="choice",
                         dest="mbuild_prj", choices=["SLES-11-SP4","SLES-12-SP0","SLES-12-SP1"],
                         help=("Input project name within name \"SLES-11-SP4|SLES-12-SP0|SLES-12-SP1\"."))
@@ -68,10 +68,6 @@ class CMDParamParser(optparse.OptionParser):
         self.add_option("-r", "--repo", action="store", type="string",
                         dest="kotdmb_repo",
                         help=("Input a repo address"))
-
-        self.add_option("-j", "--jobname", action="store", type="string",
-                        dest="kotdmb_jjob",
-                        help=("Input jenkins job name that will be triggered"))
         
         self.add_option("-p", "--prjname", action="store", type="choice",
                         dest="kotdmb_prj", choices=["SLES-11-SP4","SLES-12-SP0","SLES-12-SP1"],
@@ -85,8 +81,12 @@ class CMDParamParser(optparse.OptionParser):
             usage='Usage: %prog [options]',
             epilog="Reinstall host ...")
 
-        self.add_option("-j", "--jobname", action="store", type="string",
-                        dest="rinst_jobn",
+        self.add_option("-P", "--projectname", action="store", type="choice",
+                        dest="rinst_project",  choices=["KOTD","RT"],
+                        help=("Select one project for re-installation host.(KOTD|RT)"))
+
+        self.add_option("-p", "--productversion", action="store", type="string",
+                        dest="rinst_productv",
                         help=("Input a product version for reinstallation"))
         self.add_option("-r", "--repository", action="store", type="string",
                         dest="rinst_repo",
@@ -99,7 +99,9 @@ class CMDParamParser(optparse.OptionParser):
         self.add_option("-A", "--architecture", action="store", type="string",
                         dest="rinst_arch",
                         help=("Select one arch to reinstallation.(i586|ia64|ppc|s390|s390x|x86_64)"))
-
+        self.add_option("-f", "--reportfile", action="store", type="string",
+                        dest="rinst_report",
+                        help=("Input a report file, it will be reloaded and combine with current build result"))
         self.add_option("-b", "--buildversion", action="store", type="string",
                         dest="rinst_buildv",
                         help=("Input build version."))
@@ -116,6 +118,10 @@ class CMDParamParser(optparse.OptionParser):
                         dest="regre_type", choices=["stress_validation","kernel_regression",'userspace_app'],
                         help=("Test type: (stress_validation|kernel_regression|userspace_app)"))
 
+        self.add_option("-p", "--productversion", action="store", type="string",
+                        dest="regre_productv",
+                        help=("Input production version."))  
+
         self.add_option("-m", "--machine", action="store", type="string",
                         dest="regre_mach",
                         help=("Input ip address of machine which does regression test on it."))
@@ -131,6 +137,15 @@ class CMDParamParser(optparse.OptionParser):
         self.add_option("-r", "--qa-repository", action="store", type="string",
                         dest="regre_qarepo",
                         help=("Input qa repository."))
+
+        self.add_option("-f", "--reportfile", action="store", type="string",
+                        dest="regre_report",
+                        help=("Input a report file, it will be reloaded and combine with current build result"))
+
+        self.add_option("-t", "--testsuites", action="store", type="string",
+                        dest="regre_ts",
+                        help=("Input special testsuites."))        
+        
         
         return self
 
@@ -140,6 +155,9 @@ class CMDParamParser(optparse.OptionParser):
             usage='Usage: %prog [options]',
             epilog="KOTD test ...")
 
+        self.add_option("-p", "--productversion", action="store", type="string",
+                        dest="kotd_productv",
+                        help=("Input production version."))  
 
         self.add_option("-m", "--machine", action="store", type="string",
                         dest="kotd_mach",
@@ -154,8 +172,12 @@ class CMDParamParser(optparse.OptionParser):
                         help=("Input kernel build version."))
 
         self.add_option("-r", "--qa-repository", action="store", type="string",
-                        dest="kotd_qarepo",default="http://download.suse.de/ibs/Devel:/Kernel:/SLE12-SP1/standard/",
+                        dest="kotd_kernelrepo",default="http://download.suse.de/ibs/Devel:/Kernel:/SLE12-SP1/standard/",
                         help=("Input kernel repository."))
+
+        self.add_option("-f", "--reportfile", action="store", type="string",
+                        dest="kotd_report",
+                        help=("Input a report file, it will be reloaded and combine with current build result"))
         
         self.add_option("-k", "--kernelname", action="store", type="string",
                         dest="kotd_kernel",

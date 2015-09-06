@@ -135,10 +135,10 @@ class JsonGenerator(object):
     def setEmpty2FeatData(self):
         self.feat_data = []
         
-    def generateJsonFile(self, data=[]):
+    def generateJsonFile(self, file, data=[]):
         feat_data = data or self.feat_data
         json_data = json.dumps(feat_data, sort_keys = True, indent = 4, )
-        with open(self.file_name, "w+") as f:
+        with open(file, "w+") as f:
             f.truncate()
             f.write(json_data)
     '''

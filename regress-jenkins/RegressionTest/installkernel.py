@@ -55,26 +55,34 @@ def main():
 
     LOGGER.info(StringClor().printColorString("---------KOTD Test Start -----------",
                                              StringClor.HIGLIG))
-    HostContorller().markHostStatus([options.kotd_mach], HOST_STATUS_FILE,
-                                    org_status=HostContorller.HOST_FREE,
-                                    cur_status=HostContorller.HOST_RUNNING)
 
-    LOGGER.info(options.kotd_mach)
-    ins_connslave = ConnSlave(options.kotd_mach,
-                              REINSTALL_MACHINE_USER,
-                              REINSTALL_MACHINE_PASSWD)
+    # Initial environment
+    CommonOpt().cleanFile(subfix="pkl")
+    CommonOpt().cleanFile(subfix="json")
 
-    
-    ins_qaset = Install_Kernel(options.kotd_arch, ins_connslave, 
-                               (feat_name, feat_desc),
-                               options.kotd_kernel)
+    ins_qaset = Install_Kernel(options, (feat_name, feat_desc), options.kotd_kernel)
+
+    if HostContorller().reserveHost(options.kotd_mach, HOST_STATUS_FILE, ins_qaset.report_file):
+        pass
+    else:
+        rel_msg = "Host %s is busy now, test exit." %options.kotd_mach
+        LOGGER.error(rel_msg)
+        exec_duration = CommonOpt().getDiffTime(start_time, datetime.datetime.now())
+        tc_data = ins_qaset.combineTCData(tc_name='Lock host', tc_status='failed', 
+                                 tc_duration=exec_duration, tc_output=rel_msg)
+        ts_data = ins_qaset.combineTSData(ts_name="Reserve Host", ts_tc_list=tc_data)
+        kotd_data_list.extend(ts_data)
+        ins_qaset._exit(kotd_data_list, flg='1vn')
 
     kotd_data_list.extend(ins_qaset.sshSlave(try_times=60, interval_time=5,show_kernel_ver=True))
 
-    kernel_repo = os.path.join(options.kotd_qarepo, options.kotd_arch)
-    full_pkg_name = ins_qaset.getKernelPkgName(kernel_repo, options.kotd_kernel)
+    kernel_repo = os.path.join(options.kotd_kernelrepo,
+                               CommonOpt().convertPrjNameI(options.kotd_productv),
+                               'standard')
 
-    rel = ins_qaset.installPackage(qa_repo=options.kotd_qarepo, package=full_pkg_name)
+    full_pkg_name = ins_qaset.getKernelPkgName(os.path.join(kernel_repo, options.kotd_arch), options.kotd_kernel)
+
+    rel = ins_qaset.installPackage(qa_repo=kernel_repo, package=full_pkg_name)
     
     kotd_data_list.extend(rel[1])
     
@@ -101,6 +109,7 @@ def main():
         pass
 
     ins_qaset.executeCMD("chkconfig sshd on")
+
     ins_qaset._exit(kotd_data_list, flg='1vn')
 
 if __name__ == '__main__':

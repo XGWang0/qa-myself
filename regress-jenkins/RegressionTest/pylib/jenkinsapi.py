@@ -77,6 +77,27 @@ class JenkinsAPI(object):
         LOGGER.info("Job %s is %s" %(url, downstream_prj) )
         return downstream_prj
 
+    @staticmethod
+    def checkCauseType(url):
+        #url = 'http://127.0.0.1:8080/job/test'
+        url = os.path.join(url, 'api', 'json?pretty=true', '&tree=actions[causes[shortDescription]]')
+
+        if URLParser().checkURLPath(url):
+            req = urlopen(url)
+            data = json.loads(req.read())
+            
+            for act1 in data['actions']:
+                if 'causes' in act1:
+                    for cau1 in act1['causes']:
+                        if 'shortDescription' in cau1:
+                            if re.search('Started by upstream project', cau1['shortDescription'], re.I):
+                                return True
+    
+            return False
+        else:
+            LOGGER.warn("url %s is invalid" %url)
+            return False
+
     '''
     def chkCurrBuildCause(self):
         build_api_json = PrjPath().getBuildURL() + '/api/json'
@@ -106,4 +127,4 @@ class JenkinsAPI(object):
 if __name__ == '__main__':
     api = JenkinsAPI()
     
-    print api.checkDownStreamProject('http://147.2.207.67:8080/job/REGRESSIONTEST/job/KOTD_SLE-12-SP0/job/x86_64/job/03_UpdateKernel')
+    print api.checkCauseType('http://127.0.0.1:8080/job/group/job/t4/7/')

@@ -34,7 +34,7 @@ class URLParser(object):
     def checkURLPath(url):
         try:
             w = urlopen(url)
-            w.close()
+            #w.close()
             return True
         except HTTPError,e:
             LOGGER.warn("URL [%s] %s" %(url,e) )
@@ -82,5 +82,12 @@ class URLParser(object):
                     return ""
                 else:
                     continue
+            except URLError, ex:
+                LOGGER.error(ex)
+                if times == 3:
+                    return ""
+                else:
+                    continue         
             finally:
-                w.close()
+                pass
+                #w.close()

@@ -79,7 +79,9 @@ class PrjPath(object):
     @staticmethod
     def getProductVersion():
         job_name = PrjPath().getJobName()
-        product_v =  job_name.split(os.sep)[-3].strip()
+        LOGGER.info(job_name)
+        product_v = re.search("(%s.*SLE\S+?%s)" %(os.sep, os.sep), job_name, re.I).groups()[0]
+        #product_v =  job_name.split(os.sep)[-3].strip()
 
         return CommonOpt().convertPrjName(product_v)
 
@@ -114,14 +116,14 @@ class CommonOpt(object):
     @staticmethod
     def convertPrjName(prj_name):
         print prj_name
-        if re.search('sle\S+12\S+sp0', prj_name, re.I):
-            return 'SLE-12'
-        elif re.search('sle\S+12\S+sp1', prj_name, re.I):
-            return 'SLE-12-SP1'
-        elif re.search('sle\S+11\S+sp3', prj_name, re.I):
-            return 'SLE-11-SP3'
-        elif re.search('sle\S+11\S+sp4', prj_name, re.I):
-            return 'SLE-11-SP4'
+        if re.search('SLE\S+12\S+SP0', prj_name, re.I):
+            return re.sub('SLE\S+12\S+SP0', 'SLE-12', prj_name)
+        elif re.search('SLE\S+12\S+sp1', prj_name, re.I):
+            return re.sub('SLE\S+12\S+SP1', 'SLE-12-SP1', prj_name)
+        elif re.search('SLE\S+11\S+sp3', prj_name, re.I):
+            return re.sub('SLE\S+11\S+sp3', 'SLE-11-SP3', prj_name)
+        elif re.search('SLE\S+11\S+sp4', prj_name, re.I):
+            return re.sub('SLE\S+11\S+SP4', 'SLE-11-SP4', prj_name)
         else:
             return prj_name        
 
@@ -169,11 +171,49 @@ class CommonOpt(object):
             return []
     
     @staticmethod
-    def cleanPKLFile():
-        path = PrjPath().getArchLevelPath()
-        files = os.path.join(path, '*.pkl')
+    def cleanFile(subfix="pkl"):
+        path = PrjPath().getWorkSpace()
+        files = os.path.join(path, '*.%s' %subfix)
         for f in glob.glob(files):
             os.remove(f)
+        
+        LOGGER.info("Clean all file with suffix %s in path %s" %(subfix, path))
+        
+    @staticmethod
+    def generateRandomStr():
+        const_str = 'AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz0123456789'
+        return ''.join(random.sample(const_str,30))
+    
+    @staticmethod
+    def generateUUID(string):
+        import uuid
+        str_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, string))
+        LOGGER.debug('UUID : %s' %str_uuid)
+        return str_uuid
+
+    @staticmethod
+    def getOSPrdVerAndArch(content):
+        if 'SUSE Linux Enterprise Server' in content:
+            re_compile = re.compile('SUSE Linux Enterprise Server\s+(\d+)\s+([SP]*\d*).*\((\S+)\)\s+-\s+Kernel', re.I)
+            re_ser = re_compile.search(content)
+            if re_ser:
+                p_v, s_v, arch = re_ser.groups()
+                p_v = p_v.strip().upper()
+                s_v = s_v.strip().upper()
+                if p_v and s_v:
+                    return ('SLE-%s-%s' %(p_v, s_v), arch)
+                elif p_v and not s_v:
+                    return ('SLE-%s' %(p_v), arch)
+                else:
+                    return (None, None)
+        elif 'openSUSE' in content:
+            re_compile = re.compile('openSUSE\s+(\d+[.]*\d*)\s+.*Kernel', re.I)
+            re_ser = re_compile.search(content)
+            if re_ser:
+                return (re_ser.groups()[0],'x86_64')
+            else:
+                return (None, None)
+    
 '''
 def getPrjCfgPath(prj_name):
     return PrjPath().getPrjCfgPath(prj_name)
@@ -212,7 +252,7 @@ REINSTALL_MACHINE_CMD = ('/usr/share/qa/tools/install.pl '
                          ' -p %(repo)s -t base -B')
 
 REGRESSION_TEST_CFG_PATH = PrjPath().getPrjCfgPath("REGRESSION_TEST_CFG")
-HOST_STATUS_FILE = os.path.join(REGRESSION_TEST_CFG_PATH, "HOST_STATUS.cfg")
+HOST_STATUS_FILE = os.path.join(REGRESSION_TEST_CFG_PATH, "HOST_STATUS1.cfg")
 ####----------------------- Common Variable end  -------------------------------------#
 
 ####----------------------- Regression test start  -----------------------------------#
@@ -223,15 +263,13 @@ RT_PRJ_CONFIG_PATH = PrjPath().createFolder(os.path.join(REGRESSION_TEST_CFG_PAT
 RT_REF_TEST_CFG_FILE = os.path.join(RT_PRJ_CONFIG_PATH, 'rt.cfg')
 RT_RDY_TRIGGER_JOB_FILE = os.path.join(RT_PRJ_CONFIG_PATH, 'READY_TRIGGER_JOB.cfg')
 
-
-LOCAL_ARCH = ['x86_64','i386']
-REMOTE_ARCH = ['ia64','ppc64']
 #---- Monitor build variable end --------#
 
 
 #---- Stress V/Kernel R/UserSpace start ------#
 PREFIX_QA_HEAD_REPO = 'http://dist.nue.suse.com/ibs/QA:/Head/'
-PREFIX_PRODUCT_SDK_REPO = 'http://147.2.207.1/dist/install/SLP/%(prd_name)s-SDK-LATEST/%(arch)s/dvd1/'
+PREFIX_PRODUCT_SDK_L_REPO = 'http://147.2.207.1/dist/install/SLP/%(prd_name)s-SDK-LATEST/%(arch)s/dvd1/'
+PREFIX_PRODUCT_SDK_R_REPO = 'http://dist.suse.de/install/SLP/%(prd_name)s-SDK-LATEST/%(arch)s/DVD1/'
 ## Test suite common constant variable
 
 TS_QASET_PATH = '/usr/share/qa/qaset/qaset'
@@ -260,10 +298,6 @@ KOTD_PRJ_CONFIG_PATH = PrjPath().createFolder(os.path.join(REGRESSION_TEST_CFG_P
 
 KOTD_REF_TEST_CFG_FILE = os.path.join(KOTD_PRJ_CONFIG_PATH, 'kotd.cfg')
 KOTD_RDY_TRIGGER_JOB_FILE = os.path.join(KOTD_PRJ_CONFIG_PATH,'NEEDED_2TRIGGER_JOB.cfg')
-
-
-KOTD_ARCH = ['x86_64','xen']
-
 #---- monitor build end --------------------------#
 
 
@@ -272,7 +306,7 @@ KTOD_KERNEL_VALID_NICK = "KERNEL_REPO" + str(random.randint(10000,99999))
 #---- KTOD test end --------------------------#
 
 
-####----------------------- KTOD start  ----------------------------------------------#
+####----------------------- KTOD end   ----------------------------------------------#
 
 #TS_KERNEL_NAME = ''
 #TS_USER_APP_NAME = ''
