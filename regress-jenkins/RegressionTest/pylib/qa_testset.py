@@ -89,57 +89,71 @@ class QA_TESTSET(object):
             sufix1 = CommonOpt.generateRandomStr()
             return (os.path.join('/tmp', sufix1), sufix1)
 
-    def executeCMD(self, cmd, chk_posit=True, w_timeout=100, s_timeout=5, title="Execute CMD",chk_reltime=True):
-        rel = self.ins_conslave.getResultFromCMD(cmd, handlespecialchar=True, w_timeout=w_timeout,
-                                                 s_timeout=s_timeout, chk_reltime=chk_reltime)
-        LOGGER.info("Return info : %s" %rel[1])
-        exec_duration = CommonOpt().getDiffTime(self.start_time, datetime.datetime.now())
-        
-        rel_msg = "\n[CMD] :%s\n" %cmd + '-'*80 + "\n%s" %rel[1]
-        if rel[0] == 1 :
-            rel1 = self.ins_conslave.getReturnCode()
-            if chk_posit is True:
-                if rel1[0] is False:
-                    rel1_msg = "Return code is non-zero, $? is [ %s]" %rel1[1]
-                    LOGGER.warn(StringColor().printColorString(rel1_msg, StringColor.F_RED))
-                    rel_msg = rel_msg + '\n' + rel1_msg
-                    tc_data = self.combineTCData(tc_name='Run shell cmd', tc_status='failed', 
-                                                 tc_duration=exec_duration, tc_output=rel_msg)
-                    ts_data = self.combineTSData(ts_name=title, ts_tc_list=tc_data)
+    def executeCMD(self, cmd, chk_posit=True, w_timeout=100, s_timeout=5,
+                   title="Execute CMD",chk_reltime=True, times=1):
 
-                    self._exit(ts_data)
-                else:
-                    LOGGER.info(
-                                StringColor().printColorString(
-                                    "Return code $? is [ %s]" %rel1[1],
-                                    StringColor.F_GRE))
-                return (rel1[0], rel[1])
-            else:
-                if rel1[0] is False:
-                    LOGGER.warn(
-                                StringColor().printColorString(
-                                    "Return code is EXPECTED non-zero result , $? is [ %s]" %rel1[1],
-                                    StringColor.F_BLU))
+        for i in range(times):
+            rel = self.ins_conslave.getResultFromCMD(cmd, handlespecialchar=True, w_timeout=w_timeout,
+                                                     s_timeout=s_timeout, chk_reltime=chk_reltime)
+            LOGGER.info("Return info : %s" %rel[1])
+            exec_duration = CommonOpt().getDiffTime(self.start_time, datetime.datetime.now())
+            
+            rel_msg = "\n[CMD] :%s\n" %cmd + '-'*80 + "\n%s" %rel[1]
+            if rel[0] == 1 :
+                rel1 = self.ins_conslave.getReturnCode()
+                if chk_posit is True:
+                    if rel1[0] is False:
+                        rel1_msg = "Return code is non-zero, $? is [ %s]" %rel1[1]
+                        LOGGER.warn(StringColor().printColorString(rel1_msg, StringColor.F_RED))
+                        if i == times-1:
+                            rel_msg = rel_msg + '\n' + rel1_msg
+                            tc_data = self.combineTCData(tc_name='Run shell cmd', tc_status='failed', 
+                                                         tc_duration=exec_duration, tc_output=rel_msg)
+                            ts_data = self.combineTSData(ts_name=title, ts_tc_list=tc_data)
+                            self._exit(ts_data)
+                        else:
+                            time.sleep(3)
+                            continue
+                    else:
+                        LOGGER.info(
+                                    StringColor().printColorString(
+                                        "Return code $? is [ %s]" %rel1[1],
+                                        StringColor.F_GRE))
                     return (rel1[0], rel[1])
-    
                 else:
-                    LOGGER.info(
-                                StringColor().printColorString(
-                                    "Return code is UNEXPECTED zero result, $? is [ %s]" %rel1[1],
-                                    StringColor.F_RED))
+                    if rel1[0] is False:
+                        LOGGER.warn(
+                                    StringColor().printColorString(
+                                        "Return code is EXPECTED non-zero result , $? is [ %s]" %rel1[1],
+                                        StringColor.F_BLU))
+                        return (rel1[0], rel[1])
+        
+                    else:
+                        LOGGER.info(
+                                    StringColor().printColorString(
+                                        "Return code is UNEXPECTED zero result, $? is [ %s]" %rel1[1],
+                                        StringColor.F_RED))
+                        if i == times-1:
+                            tc_data = self.combineTCData(tc_name='Run shell cmd', tc_status='failed', 
+                                                         tc_duration=exec_duration, tc_output=rel_msg)
+                            ts_data = self.combineTSData(ts_name=title, ts_tc_list=tc_data)
+        
+                            self._exit(ts_data)
+                        else:
+                            time.sleep(3)
+                            continue
+            else:
+                rel_msg = "Failed to get normal result when executes cmd %s, status:%d" %(cmd,rel[0])
+                LOGGER.info(
+                    StringColor().printColorString(rel_msg, StringColor.F_RED))
+                if i == times-1:
                     tc_data = self.combineTCData(tc_name='Run shell cmd', tc_status='failed', 
                                                  tc_duration=exec_duration, tc_output=rel_msg)
                     ts_data = self.combineTSData(ts_name=title, ts_tc_list=tc_data)
-
                     self._exit(ts_data)
-        else:
-            rel_msg = "Failed to get normal result when executes cmd %s, status:%d" %(cmd,rel[0])
-            LOGGER.info(
-                StringColor().printColorString(rel_msg, StringColor.F_RED))
-            tc_data = self.combineTCData(tc_name='Run shell cmd', tc_status='failed', 
-                                         tc_duration=exec_duration, tc_output=rel_msg)
-            ts_data = self.combineTSData(ts_name=title, ts_tc_list=tc_data)
-            self._exit(ts_data) 
+                else:
+                    time.sleep(3)
+                    continue
 
     def sshSlave(self, try_times=5, interval_time=10, show_kernel_ver=False):
         '''Wrap the re-installation host function
@@ -340,7 +354,7 @@ class QA_TESTSET(object):
         #rel_list = [{'name':"Install package", 'status':True, 'output':ret_msg, 'error_msg':None, 'url':None}]
         return ts_data
 
-    def installPackage(self, qa_repo, package=TS_STRESS_VALID_NAME):
+    def installPackage(self, qa_repo, package=TS_STRESS_VALID_NAME, times=3):
         
         # Add repo to zypper 
         #self.addRepo2Host(qa_repo)
@@ -355,13 +369,14 @@ class QA_TESTSET(object):
         # Refresh repo 
         LOGGER.info(StringColor().printColorString("Refresh repo on slave.", StringColor.F_BLU))
         refrepo_cmd = PREFIX_REF_REPO_CMD %dict(repo_nike=TS_STRESS_VALID_NICK)
-        self.executeCMD(refrepo_cmd, w_timeout=1800, s_timeout=20, title='Refresh Repo')
+        self.executeCMD(refrepo_cmd, w_timeout=1800, s_timeout=20, title='Refresh Repo', times=times)
 
         # Install package
         LOGGER.info(StringColor().printColorString("Install package on slave.", StringColor.F_BLU))
         inpackage_cmd = PREFIX_INS_REPO_CMD %dict(repo_nike=TS_STRESS_VALID_NICK,
                                                   ts_name=package)
-        self.executeCMD(inpackage_cmd, w_timeout=1800, s_timeout=30, title="Install Qa-set Package")
+        self.executeCMD(inpackage_cmd, w_timeout=1800,
+                        s_timeout=30, title="Install Qaset Package", times=times)
 
         # Collect data 
         exec_duration = CommonOpt().getDiffTime(self.start_time, datetime.datetime.now())
@@ -870,6 +885,7 @@ class QA_TESTSET(object):
             '''
             if return_code == 1:
                 if self.prefix_feat_name not in ['US','KR']:
+                    LOGGER.debug('free host')
                     HostContorller().freeHost(self.ins_conslave.slave_addr, HOST_STATUS_FILE, self.report_file)
                 else:
                     HostContorller().releaseHost(self.ins_conslave.slave_addr, HOST_STATUS_FILE, self.report_file)
