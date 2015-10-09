@@ -43,7 +43,7 @@ class ConnSlave(object):
 
         self.ssh = None
     
-    def sshSlave(self, timeout=20, try_times=3, interval_time=600):
+    def sshSlave(self, timeout=30, try_times=3, interval_time=600):
 
         cmd_sshslave = "ssh -o ConnectTimeout=%s %s@%s" %(timeout,
                                                        self.slave_name,
@@ -216,7 +216,13 @@ class ConnSlave(object):
                 except pexpect.TIMEOUT as e:
                     LOGGER.warn(self.color_ins.printColorString("Read 1 character from console timeout:%d" % s_timeout,
                                                                 StringColor.F_YEL))
-                    pass
+                    time.sleep(30)
+                    if i == 1:
+                        LOGGER.warn(self.color_ins.printColorString("Failed to get console info, reconnect slave",
+                                                                    StringColor.F_YEL))
+                        self.closeSSH()
+                        ret = (0, "Reconnect slave")
+                        continue
     
                 except pexpect.EOF as e1:
                     LOGGER.warn(self.color_ins.printColorString(e1,

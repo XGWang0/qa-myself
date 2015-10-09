@@ -89,7 +89,7 @@ def main():
     if rel[0] is True:
         rel = ins_qaset.rebootSlave()
     
-        rel = ins_qaset.sshSlave(try_times=50, interval_time=60)
+        rel = ins_qaset.sshSlave(try_times=100, interval_time=60)
     
         rel = ins_qaset.checkKernelVer(full_pkg_name)
         if rel[0] is True:

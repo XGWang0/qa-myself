@@ -21,6 +21,7 @@
 # WITH THE WORK OR THE USE OR OTHER DEALINGS IN THE WORK.
 # ****************************************************************************
 
+import time
 from urllib2 import urlopen, HTTPError
 
 from constantvars import LOGGER
@@ -67,7 +68,7 @@ class URLParser(object):
     
     def getFileContent(self,url, times=3):
         
-        while times -1 < 3:
+        for i in range(times):
             url = self.getValidURL(url)
             if not url:
                 return ""
@@ -78,15 +79,17 @@ class URLParser(object):
                 return r
             except HTTPError,e:
                 LOGGER.error(e)
-                if times == 3:
+                if i == 2:
                     return ""
                 else:
+                    time.sleep(1)
                     continue
             except URLError, ex:
                 LOGGER.error(ex)
-                if times == 3:
+                if i == 2:
                     return ""
                 else:
+                    time.sleep(1)
                     continue         
             finally:
                 pass

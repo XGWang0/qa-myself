@@ -105,7 +105,7 @@ def main():
 
     rel = ins_qaset.executeTS(ts_run=ts_run, timeout=60)
 
-    ins_qaset.checkFile(ts_run=ts_run, timeout=172800, interval_time=120)
+    ins_qaset.checkFile(ts_run=ts_run, timeout=345600, interval_time=120)
 
     ts_data = ins_qaset.getTestSuiteInfo()
     ts_result.extend(ts_data)

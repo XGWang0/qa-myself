@@ -83,7 +83,7 @@ def main():
     ts_data_list.extend(ins_qaset.installSlave(repo=options.rinst_repo, s_timeout=600))
 
     rel = ins_qaset.rebootSlave()
-    rel = ins_qaset.sshSlave(try_times=50, interval_time=60)
+    rel = ins_qaset.sshSlave(try_times=120, interval_time=60)
 
     rel = ins_qaset.executeCMD("uname -a")
 

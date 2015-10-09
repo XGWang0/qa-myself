@@ -46,7 +46,9 @@ def main():
 
     host = sys.argv[1]
     report_file = getReportFile(sys.argv[2])[1]
-    HostContorller().getAvailableHost(host, HOST_STATUS_FILE, HostContorller.HOST_FREE, HostContorller.HOST_FREE + ' ALL')
+    LOGGER.debug(HOST_STATUS_FILE)
+    #HostContorller().getAvailableHost(host, HOST_STATUS_FILE, HostContorller.HOST_FREE, HostContorller.HOST_FREE + ' ALL')
+    HostContorller().getAvailableHost(host, HOST_STATUS_FILE, '', HostContorller.HOST_FREE + ' ALL')
 
 if __name__ == '__main__':
 

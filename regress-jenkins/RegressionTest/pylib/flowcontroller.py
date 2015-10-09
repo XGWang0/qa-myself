@@ -25,6 +25,8 @@ import re
 import fcntl
 
 from constantvars import *
+from conslaves import ConnSlave
+
 
 class HostContorller(object):
 
@@ -74,24 +76,26 @@ class HostContorller(object):
         try:
             fp = open(host_status_file, "a+")
         except IOError,e:
-            LOGGER.debug("Failed to open file becuase of %s" %e)
+            LOGGER.debug("Failed to open file because of %s" %e)
             return ""
 
         if self.reserveFile(fp) is False:
             return ""
         fp.seek(0)
         lines = fp.readlines()
-        #LOGGER.info(lines)
+        LOGGER.debug('Host is %s' %host)
+        LOGGER.debug('org_status is  %s' %org_status)
         for i, line in enumerate(lines):
             if host in line:
+                LOGGER.debug("Host status : %s" %line)      
                 if re.search("%s\s+%s" %(host,org_status), line, re.I):
-                    LOGGER.debug("Host status : %s" %line)
+                    LOGGER.debug("Get available host")
                     lines[i] = "%s %s\n" %(host, cur_status)
                     acquired_host_flag = True
                     avaliable_host = host
                     break
                 else:
-                    LOGGER.debug("Host status : %s" %line)
+                    LOGGER.debug("Host is busy")
                     acquired_host_flag= False
                     avaliable_host = ""
                     break
@@ -117,23 +121,40 @@ class HostContorller(object):
         fp.truncate()
         fp.writelines(file_lines)
 
-    def chooseHost(self, host_list, host_status_file, uuid_seed_file):
+    def chooseHost(self, host_list, host_status_file, uuid_seed_file, chkssh=False):
 
         reserve_uuid = CommonOpt.generateUUID(uuid_seed_file)
         for host in host_list:
+            tmp_aval_host = ''
+
             avail_host = self.getAvailableHost(host.strip(), host_status_file,
                                                HostContorller.HOST_FREE + ' ' + reserve_uuid,
                                                HostContorller.HOST_FREE + ' ' + reserve_uuid)
             
             if avail_host:
                 LOGGER.info("Get available host %s" %avail_host)
-                return avail_host
+                tmp_aval_host = avail_host
             else:
                 avail_host = self.getAvailableHost(host.strip(), host_status_file,
                                                    HostContorller.HOST_FREE + ' ALL',
                                                    HostContorller.HOST_FREE + ' ' + reserve_uuid)
                 if avail_host:
-                    return avail_host
+                    tmp_aval_host =  avail_host
+            
+            if tmp_aval_host:
+                if chkssh is False:
+                    return tmp_aval_host
+                else:
+                    conslave = ConnSlave(host,
+                                         REINSTALL_MACHINE_USER,
+                                         REINSTALL_MACHINE_PASSWD)
+                    if conslave.sshSlave(try_times=5, interval_time=5) is True:
+                        return tmp_aval_host
+                    else:
+                        self.getAvailableHost(host.strip(), host_status_file,
+                                              HostContorller.HOST_FREE,
+                                              HostContorller.HOST_FREE + ' ALL')
+                        conslave.closeSSH()
         LOGGER.warn("There is no any available host")
         return ""     
 

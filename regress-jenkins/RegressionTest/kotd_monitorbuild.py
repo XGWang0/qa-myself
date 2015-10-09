@@ -56,7 +56,7 @@ class RTBuildChange(object):
         self.rdy_tirgger_job_file = os.path.join(self.prj_cfg_path, KOTD_RDY_TRIGGER_JOB_FILE)
 
         # Initial jenkins jobs and triggered cmd
-        self.jenkins_job = "wget -O - -q \"" + os.path.dirname(PrjPath().getJobURL()[:-1])  + "/%(arch)s/buildWithParameters?ARCH=%(arch)s&BUILD_VER=%(build_ver)s&KERNEL_NAME=%(kernel_name)s&REPORT_FILE=%(report_file)s&MACHINE="
+        self.jenkins_job = "curl -X POST --user admin:susetesting \"" + os.path.dirname(PrjPath().getJobURL()[:-1])  + "/%(arch)s/buildWithParameters?ARCH=%(arch)s&BUILD_VER=%(build_ver)s&KERNEL_NAME=%(kernel_name)s&REPORT_FILE=%(report_file)s&MACHINE="
         
         self.triggered_arch = ""
         self.return_code = 1
@@ -175,7 +175,7 @@ class RTBuildChange(object):
         if cmd:
             report_file = re.search('REPORT_FILE=(\S+)&', cmd, re.I).groups()[0]
             
-            fh = self.flowctrller.chooseHost(self.hosts[arch][mode], self.host_status_file, report_file)
+            fh = self.flowctrller.chooseHost(self.hosts[arch][mode], self.host_status_file, report_file, chkssh=True)
                     
 
             if fh:

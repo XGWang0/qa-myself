@@ -26,14 +26,12 @@ WITH THE WORK OR THE USE OR OTHER DEALINGS IN THE WORK.
 Tool Brief:
   Description: This script is used to monitor repo change and trigger remote jenkins job to do test
 """
-
 from  pylib.constantvars import *
 from  pylib import StringColor as StringClor
 from  pylib import CMDParamParser as ParseParam
 from  pylib import RegConfigParser as ParseConfig
 from  pylib import URLParser, HostContorller
 from  pylib import JenkinsAPI
-
 
 class RTBuildChange(object):
     def __init__(self, options):
@@ -58,7 +56,7 @@ class RTBuildChange(object):
         self.host_status_file = HOST_STATUS_FILE
         self.rdy_tirgger_job_file = os.path.join(self.prj_cfg_path, RT_RDY_TRIGGER_JOB_FILE)
 
-        self.jenkins_job = "wget -O - -q \"" + os.path.dirname(PrjPath().getJobURL()[:-1])  + "/%(arch)s/buildWithParameters?ARCH=%(arch)s&BUILD_VER=%(build_ver)s&REPORT_FILE=%(report_file)s&MACHINE="
+        self.jenkins_job = "curl -X POST --user admin:susetesting \"" + os.path.dirname(PrjPath().getJobURL()[:-1])  + "/%(arch)s/buildWithParameters?ARCH=%(arch)s&BUILD_VER=%(build_ver)s&REPORT_FILE=%(report_file)s&MACHINE="
 
         
         self.triggered_arch = ""
@@ -69,6 +67,7 @@ class RTBuildChange(object):
         self.flowctrller = HostContorller()
 
         LOGGER.info("Initial")
+
         self.loopCheckBuildChange(self.larch)
         self.loopCheckBuildChange(self.rarch)
 
@@ -131,7 +130,7 @@ class RTBuildChange(object):
         if cmd:
             report_file = re.search('REPORT_FILE=(\S+)&', cmd, re.I).groups()[0]
             
-            fh = self.flowctrller.chooseHost(self.hosts[arch], self.host_status_file, report_file)
+            fh = self.flowctrller.chooseHost(self.hosts[arch], self.host_status_file, report_file, chkssh=True)
 
             if fh:   
                 self.return_code = 0
@@ -160,12 +159,13 @@ class RTBuildChange(object):
             if ''.join(last_content).strip() == curr_content.strip():
                 return (False, last_content, curr_content)
             else:
+                LOGGER.info("Save newest build info to last repo file")
                 CommonOpt().dumpData(last_file, curr_content)
                 return (True, last_content, curr_content)
 
 
 def main():
-    
+
     # Get parameters from cmd
     ins_parseparam = ParseParam().parseMonitorParam()
     options, _args = ins_parseparam.parse_args()

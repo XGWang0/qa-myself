@@ -395,19 +395,17 @@ class QA_TESTSET(object):
 
     def genRTConfig(self, testsuites):
         
-        gen_rt_cfg_cmd = '''mkdir -p /root/qaset/;echo -e "SQ_TEST_RUN_LIST=(" > /root/qaset/config'''
+        gen_rt_cfg_cmd = '''mkdir -p /root/qaset/;echo -e "SQ_TEST_RUN_LIST=(" > /root/qaset/list'''
         self.executeCMD(gen_rt_cfg_cmd, w_timeout=600, s_timeout=30, title="Generate Test Suites")
+
+        self.executeCMD('echo -e "    _reboot_off" >> /root/qaset/list', w_timeout=600,
+                        s_timeout=30, title="Generate Test Suites")
         for testsuite in testsuites.split(","):
-            add_ts_cmd = '''echo -e "    %s" >> /root/qaset/config''' %testsuite
+            add_ts_cmd = '''echo -e "    %s" >> /root/qaset/list''' %testsuite
             self.executeCMD(add_ts_cmd, w_timeout=600, s_timeout=30, title="Generate Test Suites")
 
-        self.executeCMD("echo -e \")\" >> /root/qaset/config", w_timeout=600, s_timeout=30, title="Generate Test Suites")
-        #gen_rt_cfg_cmd = '''mkdir -p /root/qaset/;echo -e "SQ_TEST_RUN_LIST=(%s)" > /root/qaset/config''' %(testsuites)
-        '''
-        LOGGER.info(StringColor().printColorString(
-                    "Generate regression test config file. cmd :[%s]" %gen_rt_cfg_cmd, StringColor.F_BLU))
-        self.executeCMD(gen_rt_cfg_cmd, w_timeout=600, s_timeout=30, title="Generate Test Suites")
-        '''
+        self.executeCMD("echo -e \")\" >> /root/qaset/list", w_timeout=600, s_timeout=30, title="Generate Test Suites")
+
         exec_duration = CommonOpt().getDiffTime(self.start_time, datetime.datetime.now())
 
         ret_msg = "Successfully generate special testsuites list."
@@ -522,6 +520,7 @@ class QA_TESTSET(object):
                     LOGGER.info(StringColor().printColorString("This test is dropped down or can not be launched, try again", StringColor.F_GRE))
             time.sleep(60)
         else:
+            exec_duration = CommonOpt().getDiffTime(self.start_time, datetime.datetime.now())
             tc_status = 'failed'
             ret_msg = "Test suite is not launched successfully, due to no screen"
             LOGGER.info(StringColor().printColorString(ret_msg,  StringColor.F_GRE))
