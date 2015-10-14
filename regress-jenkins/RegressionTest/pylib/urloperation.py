@@ -32,17 +32,24 @@ class URLParser(object):
         pass
 
     @staticmethod
-    def checkURLPath(url):
-        try:
-            w = urlopen(url)
-            #w.close()
-            return True
-        except HTTPError,e:
-            LOGGER.warn("URL [%s] %s" %(url,e) )
-            return False
-        except Exception, e:
-            LOGGER.warn("URL [%s] %s" %(url,e) )
-            return False
+    def checkURLPath(url, times=1):
+        for i in range(times):
+            try:
+                w = urlopen(url)
+                #w.close()
+                return True
+            except HTTPError,e:
+                if i == times-1:
+                    LOGGER.warn("URL [%s] %s" %(url,e) )
+                    return False
+                else:
+                    time.sleep(3)
+            except Exception, e:
+                if i == times-1:
+                    LOGGER.warn("URL [%s] %s" %(url,e) )
+                    return False
+                else:
+                    time.sleep(3)
 
     def getValidURL(self, url):
         convert_url_flag = False

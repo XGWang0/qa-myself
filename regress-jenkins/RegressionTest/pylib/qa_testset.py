@@ -205,17 +205,17 @@ class QA_TESTSET(object):
 
     def getValidURL(self,url):
         tmp_url = url
-        if URLParser().checkURLPath(tmp_url):
+        if URLParser().checkURLPath(tmp_url, times=3):
             return tmp_url
         else:
             if 'DVD' in tmp_url:
                 tmp_url = tmp_url.replace('DVD','dvd')
             elif 'dvd' in tmp_url:
                 tmp_url = tmp_url.replace('dvd','DVD')
-        if URLParser().checkURLPath(tmp_url):
+        if URLParser().checkURLPath(tmp_url, times=3):
             return tmp_url
         else:
-            rel_msg = "Re-install tool failure, somes repo does not exist!!"
+            rel_msg = "Re-install tool failure, some repos do not exist!!"
             ts_data = self.warpTCandTSdata(rel_msg, 'Run shell cmd', 'failed', "Check re-installation tools")
             self._exit(ts_data)  
 
