@@ -1,0 +1,108 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<project>
+  <actions/>
+  <description>&lt;font color=&quot;orange&quot; size=4&gt;&lt;b&gt;Summary: &lt;/font&gt;: Monitory repository of virtualization tearm (Devel and Test repositorys).&lt;/b&gt;&lt;br&gt;&lt;br&gt;&#xd;
+&#xd;
+&lt;font color=&quot;orange&quot; size=4&gt;&lt;b&gt;Project: &lt;/font&gt;Virtualization&lt;/b&gt;&lt;br&gt;&lt;br&gt;&#xd;
+&#xd;
+&lt;font color=&quot;orange&quot; size=4&gt;&lt;b&gt;Work Flow: &lt;/font&gt;&lt;br&gt;&#xd;
+Monitor job supports both ways (Manual | Automatic) to be triggered. &lt;br&gt;&#xd;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&#xd;
+1 Select specific product and version repository to build job (Manual) ; &lt;br&gt;&#xd;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; &#xd;
+2 Use default full product and version repositorys to build job (Automatic); &lt;br&gt;&#xd;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; &#xd;
+3 Monitor any change of repositiroy. &lt;br&gt;&#xd;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; &#xd;
+4 Trigger job to finish test; &lt;br&gt;&#xd;
+&#xd;
+</description>
+  <logRotator class="hudson.tasks.LogRotator">
+    <daysToKeep>10</daysToKeep>
+    <numToKeep>20</numToKeep>
+    <artifactDaysToKeep>-1</artifactDaysToKeep>
+    <artifactNumToKeep>-1</artifactNumToKeep>
+  </logRotator>
+  <keepDependencies>true</keepDependencies>
+  <properties/>
+  <scm class="hudson.scm.NullSCM"/>
+  <assignedNode>HamsterServer_151.155.144.50</assignedNode>
+  <canRoam>false</canRoam>
+  <disabled>false</disabled>
+  <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+  <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+  <triggers>
+    <org.jenkinsci.plugins.scripttrigger.ScriptTrigger plugin="scripttrigger@0.31">
+      <spec>H/10 * * * *</spec>
+      <triggerLabel>HamsterServer_151.155.144.50</triggerLabel>
+      <labelRestriction>true</labelRestriction>
+      <enableConcurrentBuild>false</enableConcurrentBuild>
+      <script>sh -x /usr/share/qa/virtautolib/jenkins/jenkins_monitor_repo.sh &quot;SLE-12&quot; &quot;SP0 SP1&quot; &quot;$JENKINS_URL/job/QAA/job/01_InstallingGuest/job/02_execute_test/&quot; P1</script>
+      <exitCode>0</exitCode>
+    </org.jenkinsci.plugins.scripttrigger.ScriptTrigger>
+  </triggers>
+  <concurrentBuild>false</concurrentBuild>
+  <builders>
+    <hudson.plugins.groovy.SystemGroovy plugin="groovy@1.27">
+      <scriptSource class="hudson.plugins.groovy.StringScriptSource">
+        <command>import jenkins.model.*
+
+def q = Jenkins.instance.queue
+
+job_list = q.items.findAll{ it.task.url.endsWith(&apos;01_InstallingGuest/job/02_execute_test/&apos;) }
+job_list_len = job_list.size()
+if(job_list_len &gt;= 2){
+    sleep(10000)
+    println job_list.sort()[1..-1]
+    rmed_list = job_list.sort()[1..-1].each{ q.cancel(it.task) }
+}</command>
+      </scriptSource>
+      <bindings></bindings>
+      <classpath></classpath>
+    </hudson.plugins.groovy.SystemGroovy>
+  </builders>
+  <publishers>
+    <hudson.plugins.emailext.ExtendedEmailPublisher plugin="email-ext@2.40.5">
+      <recipientList>xgwang@suse.com,cachen@suse.com,jtang@suse.com</recipientList>
+      <configuredTriggers>
+        <hudson.plugins.emailext.plugins.trigger.AlwaysTrigger>
+          <email>
+            <recipientList></recipientList>
+            <subject>$PROJECT_DEFAULT_SUBJECT</subject>
+            <body>$PROJECT_DEFAULT_CONTENT</body>
+            <recipientProviders>
+              <hudson.plugins.emailext.plugins.recipients.ListRecipientProvider/>
+            </recipientProviders>
+            <attachmentsPattern></attachmentsPattern>
+            <attachBuildLog>false</attachBuildLog>
+            <compressBuildLog>false</compressBuildLog>
+            <replyTo>$PROJECT_DEFAULT_REPLYTO</replyTo>
+            <contentType>project</contentType>
+          </email>
+        </hudson.plugins.emailext.plugins.trigger.AlwaysTrigger>
+      </configuredTriggers>
+      <contentType>default</contentType>
+      <defaultSubject>$JOB_NAME (Build #$BUILD_NUMBER) - New version of packages were found, trigger virtualization test.</defaultSubject>
+      <defaultContent>Jenkin&apos;s test results:
+
+Project:       $PROJECT_NAME  (Build #$BUILD_NUMBER)
+Test Node:     $NODE_NAME
+ 
+Test Results:  $BUILD_STATUS
+
+Trigger Target: 01_Installing_Test_On_Virtualization</defaultContent>
+      <attachmentsPattern></attachmentsPattern>
+      <presendScript>$DEFAULT_PRESEND_SCRIPT</presendScript>
+      <attachBuildLog>false</attachBuildLog>
+      <compressBuildLog>false</compressBuildLog>
+      <replyTo>$DEFAULT_REPLYTO</replyTo>
+      <saveOutput>false</saveOutput>
+      <disabled>false</disabled>
+    </hudson.plugins.emailext.ExtendedEmailPublisher>
+  </publishers>
+  <buildWrappers>
+    <hudson.plugins.ansicolor.AnsiColorBuildWrapper plugin="ansicolor@0.4.1">
+      <colorMapName>xterm</colorMapName>
+    </hudson.plugins.ansicolor.AnsiColorBuildWrapper>
+  </buildWrappers>
+</project>

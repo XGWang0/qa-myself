@@ -1,0 +1,66 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<com.cloudbees.hudson.plugins.folder.Folder plugin="cloudbees-folder@4.8">
+  <actions/>
+  <description>&lt;font color=&quot;orange&quot; size=4&gt;&lt;b&gt;Summary: &lt;/font&gt;:
+  Automatically monitor the change of repository and trigger vm-guest installation test.
+  The project supports both ways(Manual | Automatic) to execute. 
+  It supplys distribution mechanism and parallelizable installation vm-guest.
+  It is also parameterized, User could get expeted test accourding to selected parameters. &lt;/b&gt;&lt;br&gt;&lt;br&gt;
+
+&lt;font color=&quot;orange&quot; size=4&gt;&lt;b&gt;Project: &lt;/font&gt;Virtualization&lt;/b&gt;&lt;br&gt;&lt;br&gt;
+
+&lt;font color=&quot;orange&quot; size=4&gt;&lt;b&gt;Work Flow: &lt;/font&gt;&lt;br&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;
+1 Monitor relevant packages of repository ; &lt;br&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; 
+2 Automatically trigger test with default parameters; &lt;br&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; 
+3 Install host server disturibtedly; &lt;br&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; 
+4 Update relevant packages of virtualization; &lt;br&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; 
+5 Switch kernel type (kvm or xen); &lt;br&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; 
+6 Install guest in parallel; &lt;br&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; 
+7 Verify status of guest on new version host; &lt;br&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; 
+8 Statistic result and grenerate report &lt;br&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; 
+9 Send mail noticifaction &lt;br&gt;&lt;br&gt;
+
+   
+&lt;font color=&quot;orange&quot; size=4&gt;&lt;b&gt;Usage: &lt;/font&gt;&lt;br&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; 
+1 Manual : Choice expected parameters and build job.&lt;br&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; 
+2 Automatic : Do not care anything, just let jenkins do it.&lt;/b&gt;&lt;br&gt;</description>
+  <displayName>01_Installing_Test_On_Virtualization</displayName>
+  <properties>
+    <com.cloudbees.hudson.plugins.folder.properties.FolderCredentialsProvider_-FolderCredentialsProperty>
+      <domainCredentialsMap class="hudson.util.CopyOnWriteMap$Hash">
+        <entry>
+          <com.cloudbees.plugins.credentials.domains.Domain plugin="credentials@1.22">
+            <specifications/>
+          </com.cloudbees.plugins.credentials.domains.Domain>
+          <java.util.concurrent.CopyOnWriteArrayList/>
+        </entry>
+      </domainCredentialsMap>
+    </com.cloudbees.hudson.plugins.folder.properties.FolderCredentialsProvider_-FolderCredentialsProperty>
+  </properties>
+  <icon class="com.cloudbees.hudson.plugins.folder.icons.StockFolderIcon"/>
+  <views>
+    <hudson.model.AllView>
+      <owner class="com.cloudbees.hudson.plugins.folder.Folder" reference="../../.."/>
+      <name>All</name>
+      <filterExecutors>false</filterExecutors>
+      <filterQueue>false</filterQueue>
+      <properties class="hudson.model.View$PropertyList"/>
+    </hudson.model.AllView>
+  </views>
+  <viewsTabBar class="hudson.views.DefaultViewsTabBar"/>
+  <primaryView>All</primaryView>
+  <healthMetrics>
+    <com.cloudbees.hudson.plugins.folder.health.WorstChildHealthMetric/>
+  </healthMetrics>
+</com.cloudbees.hudson.plugins.folder.Folder>

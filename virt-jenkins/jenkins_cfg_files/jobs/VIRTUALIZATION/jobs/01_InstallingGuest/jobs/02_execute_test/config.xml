@@ -1,0 +1,216 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<project>
+  <actions/>
+  <description>&lt;font color=&quot;orange&quot; size=4&gt;&lt;b&gt;Summary: &lt;/font&gt;: VM-Guest installation test suppors both ways (Manual | Automatic) to be executed and it&apos;s multiple-process concurrent. You could select sutiable for yourself parameters or default on dashboard to tirgger the job.&lt;/b&gt;&lt;br&gt;&lt;br&gt;&#xd;
+&#xd;
+&lt;font color=&quot;orange&quot; size=4&gt;&lt;b&gt;Project: &lt;/font&gt;Virtualization&lt;/b&gt;&lt;br&gt;&lt;br&gt;&#xd;
+&#xd;
+&lt;font color=&quot;orange&quot; size=4&gt;&lt;b&gt;Work Flow: &lt;/font&gt;&lt;br&gt;&#xd;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&#xd;
+1 Install host server on physical machine distributedly through selected product version; &lt;br&gt;&#xd;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; &#xd;
+2 Update relevant packages; &lt;br&gt;&#xd;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; &#xd;
+3 Switch xen kernel if user selects xen test; &lt;br&gt;&#xd;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; &#xd;
+4 Install guest on host server in parallel (concurrent num is settable in panel). &lt;br&gt;&#xd;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; &#xd;
+5 Verify guest status; &lt;br&gt;&#xd;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; &#xd;
+6 Statistic result and Generate cucumber report; &lt;br&gt;&#xd;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp; &#xd;
+7 Send mail notification ; &lt;br&gt;&#xd;
+&#xd;
+</description>
+  <logRotator class="hudson.tasks.LogRotator">
+    <daysToKeep>10</daysToKeep>
+    <numToKeep>20</numToKeep>
+    <artifactDaysToKeep>-1</artifactDaysToKeep>
+    <artifactNumToKeep>-1</artifactNumToKeep>
+  </logRotator>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition plugin="extended-choice-parameter@0.52">
+          <name>HOST_PRODUCT</name>
+          <description>&lt;font color=&quot;black&quot;, size=3&gt;&lt;b&gt;Host OS type, Choose one or more as host os, all test will be done on this platform. &lt;/b&gt;&lt;/font&gt;</description>
+          <quoteValue>false</quoteValue>
+          <saveJSONParameterToFile>false</saveJSONParameterToFile>
+          <visibleItemCount>5</visibleItemCount>
+          <type>PT_CHECKBOX</type>
+          <value>SLES-11-SP4-64.XEN,SLES-11-SP4-64.KVM,SLES-12-SP0-64.XEN,SLES-12-SP0-64.KVM,SLES-12-SP1-64.XEN,SLES-12-SP1-64.KVM</value>
+          <defaultValue>SLES-12-SP0-64.XEN,SLES-12-SP0-64.KVM</defaultValue>
+          <multiSelectDelimiter>,</multiSelectDelimiter>
+        </com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>HOST_LIST</name>
+          <description>&lt;font color=&quot;black&quot; size=4&gt;&lt;b&gt;All test will be run on filled host.(Take comba as separator)&lt;/b&gt;&lt;/font&gt;</description>
+          <defaultValue>151.155.144.61,151.155.144.62</defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition plugin="extended-choice-parameter@0.52">
+          <name>GUEST_PRODUCT</name>
+          <description>&lt;font color=&quot;black&quot;, size=3&gt;&lt;b&gt;VM-Guest OS type, you may select any type of products as vm-guest os installs on host &lt;/b&gt;&lt;/font&gt;</description>
+          <quoteValue>false</quoteValue>
+          <saveJSONParameterToFile>false</saveJSONParameterToFile>
+          <visibleItemCount>8</visibleItemCount>
+          <type>PT_CHECKBOX</type>
+          <value>nw-65,oes-11,oes-2,rhel-3,rhel-4,rhel-5,rhel-6,rhel-7,sled-10,sled-11,sled-12,sles-10,sles-11,sles-12,sles-9,win-2k,win-2k12,win-2k12r2,win-2k3,win-2k8,win-2k8r2,win-7,win-8,win-8.1,win-vista,win-xp</value>
+          <defaultValue>sled-11,sled-12,sles-11,sles-12</defaultValue>
+          <multiSelectDelimiter>,</multiSelectDelimiter>
+        </com.cwctravel.hudson.plugins.extended__choice__parameter.ExtendedChoiceParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>GUEST_PARALLEL_NUM</name>
+          <description>&lt;font color=&quot;black&quot; size=3&gt;&lt;b&gt;Parallel number for installing vm-guest on host.
+  (Default number : 2)&lt;/b&gt;&lt;/font&gt;</description>
+          <defaultValue>3</defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>VIRT_PRODUCT_VERSION</name>
+          <description>&lt;font color=&quot;black&quot;, size=4&gt;&lt;b&gt; Virtualization production version&lt;/b&gt;&lt;/font&gt;</description>
+          <defaultValue>NULL</defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>USER_DEFINED_REPO</name>
+          <description>&lt;font color=&quot;black&quot; size=4&gt;&lt;b&gt;User-defined repository (Default value : empty)&lt;/b&gt;&lt;/font&gt;</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <scm class="hudson.scm.NullSCM"/>
+  <assignedNode>HamsterServer_151.155.144.50</assignedNode>
+  <canRoam>false</canRoam>
+  <disabled>false</disabled>
+  <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+  <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+  <triggers/>
+  <concurrentBuild>false</concurrentBuild>
+  <builders>
+    <hudson.tasks.Shell>
+      <command>cd /usr/share/qa/virtautolib/jenkins &amp;&amp; python jenkins_execute_jobs.py -t gi --gi-host ${HOST_LIST} --host-product ${HOST_PRODUCT} --guest-product &quot;${GUEST_PRODUCT}&quot; --guest-parallel-num ${GUEST_PARALLEL_NUM} --virt-product-ver &quot;${VIRT_PRODUCT_VERSION}&quot;</command>
+    </hudson.tasks.Shell>
+  </builders>
+  <publishers>
+    <org.jenkins__ci.plugins.flexible__publish.FlexiblePublisher plugin="flexible-publish@0.15.2">
+      <publishers>
+        <org.jenkins__ci.plugins.flexible__publish.ConditionalPublisher>
+          <condition class="org.jenkins_ci.plugins.run_condition.core.FileExistsCondition" plugin="run-condition@1.0">
+            <file>no_availiable_host.flg</file>
+            <baseDir class="org.jenkins_ci.plugins.run_condition.common.BaseDirectory$Workspace"/>
+          </condition>
+          <publisherList>
+            <hudson.plugins.emailext.ExtendedEmailPublisher plugin="email-ext@2.40.5">
+              <recipientList>xgwang@suse.com,cachen@suse.com,jtang@suse.com</recipientList>
+              <configuredTriggers>
+                <hudson.plugins.emailext.plugins.trigger.AlwaysTrigger>
+                  <email>
+                    <recipientList></recipientList>
+                    <subject>$PROJECT_DEFAULT_SUBJECT</subject>
+                    <body>$PROJECT_DEFAULT_CONTENT</body>
+                    <recipientProviders>
+                      <hudson.plugins.emailext.plugins.recipients.ListRecipientProvider/>
+                    </recipientProviders>
+                    <attachmentsPattern></attachmentsPattern>
+                    <attachBuildLog>false</attachBuildLog>
+                    <compressBuildLog>false</compressBuildLog>
+                    <replyTo>$PROJECT_DEFAULT_REPLYTO</replyTo>
+                    <contentType>project</contentType>
+                  </email>
+                </hudson.plugins.emailext.plugins.trigger.AlwaysTrigger>
+              </configuredTriggers>
+              <contentType>default</contentType>
+              <defaultSubject>$DEFAULT_SUBJECT - [There is no available hosts to be executed test !!]</defaultSubject>
+              <defaultContent>$DEFAULT_CONTENT
+
+------------------------------------------------------
+Notice : There is no available hosts to be run!!</defaultContent>
+              <attachmentsPattern></attachmentsPattern>
+              <presendScript>$DEFAULT_PRESEND_SCRIPT</presendScript>
+              <attachBuildLog>false</attachBuildLog>
+              <compressBuildLog>false</compressBuildLog>
+              <replyTo>$DEFAULT_REPLYTO</replyTo>
+              <saveOutput>false</saveOutput>
+              <disabled>false</disabled>
+            </hudson.plugins.emailext.ExtendedEmailPublisher>
+          </publisherList>
+          <runner class="org.jenkins_ci.plugins.run_condition.BuildStepRunner$Fail" plugin="run-condition@1.0"/>
+          <executionStrategy class="org.jenkins_ci.plugins.flexible_publish.strategy.FailAtEndExecutionStrategy"/>
+        </org.jenkins__ci.plugins.flexible__publish.ConditionalPublisher>
+        <org.jenkins__ci.plugins.flexible__publish.ConditionalPublisher>
+          <condition class="org.jenkins_ci.plugins.run_condition.logic.Not" plugin="run-condition@1.0">
+            <condition class="org.jenkins_ci.plugins.run_condition.core.FileExistsCondition">
+              <file>no_availiable_host.flg</file>
+              <baseDir class="org.jenkins_ci.plugins.run_condition.common.BaseDirectory$Workspace"/>
+            </condition>
+          </condition>
+          <publisherList>
+            <hudson.plugins.emailext.ExtendedEmailPublisher plugin="email-ext@2.40.5">
+              <recipientList>xgwang@suse.com,cachen@suse.com,jtang@suse.com</recipientList>
+              <configuredTriggers>
+                <hudson.plugins.emailext.plugins.trigger.AlwaysTrigger>
+                  <email>
+                    <recipientList></recipientList>
+                    <subject>$PROJECT_DEFAULT_SUBJECT</subject>
+                    <body>$PROJECT_DEFAULT_CONTENT</body>
+                    <recipientProviders>
+                      <hudson.plugins.emailext.plugins.recipients.ListRecipientProvider/>
+                    </recipientProviders>
+                    <attachmentsPattern></attachmentsPattern>
+                    <attachBuildLog>false</attachBuildLog>
+                    <compressBuildLog>false</compressBuildLog>
+                    <replyTo>$PROJECT_DEFAULT_REPLYTO</replyTo>
+                    <contentType>project</contentType>
+                  </email>
+                </hudson.plugins.emailext.plugins.trigger.AlwaysTrigger>
+              </configuredTriggers>
+              <contentType>default</contentType>
+              <defaultSubject>$JOB_NAME (Build #$BUILD_NUMBER) - $BUILD_STATUS!</defaultSubject>
+              <defaultContent>Jenkin&apos;s test results:
+
+Project:       $PROJECT_NAME  (Build #$BUILD_NUMBER)
+Test Node:     $NODE_NAME
+ 
+Test Results:  $BUILD_STATUS
+
+Running Platform:
+   $ORG_PRODUCT
+
+Check console output to view the full result log:
+   ${BUILD_URL}
+Report link :
+   ${BUILD_URL}/cucumber-html-reports/</defaultContent>
+              <attachmentsPattern>LOG/${BUILD_TAG}.tar.gz*</attachmentsPattern>
+              <presendScript>$DEFAULT_PRESEND_SCRIPT</presendScript>
+              <attachBuildLog>false</attachBuildLog>
+              <compressBuildLog>false</compressBuildLog>
+              <replyTo>$DEFAULT_REPLYTO</replyTo>
+              <saveOutput>false</saveOutput>
+              <disabled>false</disabled>
+            </hudson.plugins.emailext.ExtendedEmailPublisher>
+            <net.masterthought.jenkins.CucumberReportPublisher plugin="cucumber-reports@0.3.1">
+              <jsonReportDirectory></jsonReportDirectory>
+              <pluginUrlPath></pluginUrlPath>
+              <fileIncludePattern>*.json</fileIncludePattern>
+              <fileExcludePattern></fileExcludePattern>
+              <skippedFails>false</skippedFails>
+              <pendingFails>false</pendingFails>
+              <undefinedFails>false</undefinedFails>
+              <missingFails>false</missingFails>
+              <noFlashCharts>false</noFlashCharts>
+              <ignoreFailedTests>false</ignoreFailedTests>
+              <parallelTesting>false</parallelTesting>
+            </net.masterthought.jenkins.CucumberReportPublisher>
+          </publisherList>
+          <runner class="org.jenkins_ci.plugins.run_condition.BuildStepRunner$Fail" plugin="run-condition@1.0"/>
+          <executionStrategy class="org.jenkins_ci.plugins.flexible_publish.strategy.FailAtEndExecutionStrategy"/>
+        </org.jenkins__ci.plugins.flexible__publish.ConditionalPublisher>
+      </publishers>
+    </org.jenkins__ci.plugins.flexible__publish.FlexiblePublisher>
+  </publishers>
+  <buildWrappers>
+    <hudson.plugins.ansicolor.AnsiColorBuildWrapper plugin="ansicolor@0.4.1">
+      <colorMapName>xterm</colorMapName>
+    </hudson.plugins.ansicolor.AnsiColorBuildWrapper>
+  </buildWrappers>
+</project>
