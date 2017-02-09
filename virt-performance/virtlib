@@ -1,0 +1,1428 @@
+#!/bin/bash
+
+function shutdown_vm()
+{
+
+	goname=$1
+	if [ $# -lt 1 ];then
+		echo "shutdown_vm require A guest name"
+	fi
+
+	echo "shutdown the guest $goname"
+	virsh destroy $goname
+	ret=$?
+
+	if [ $? != 0 ];then
+		echo "shudown_vm error dring shutdown $goname !"
+	fi
+
+}
+function rm_vm()
+{
+	if [ $# -lt 1 ];then
+			echo "rm_vm require A guest name"
+	fi
+	goname=$1
+        # stop the guest
+	shutdown_vm $goname
+
+	# remove the guest
+        echo "undefine the guest $goname"
+        virsh undefine $goname
+	if [ $? != 0 ];then
+		echo "rm_vm error during remove $goname !"
+	fi
+
+	# delete the temp files
+        rm -rf /var/lib/libvirt/images/$goname.*
+
+}
+
+function remote_ssh
+{
+	#we get host ip ,password from ENV
+
+	cmd=$1
+	sshpass -e ssh -o StrictHostKeyChecking=no root@$host $cmd
+
+}
+
+function mac_gen(){
+
+	oldmacs=""
+
+	macaddr=`echo -n 00:16:4e; dd bs=1 count=3 if=/dev/random 2>/dev/null |hexdump -v -e '/1 ":%02x"'`
+
+	if [ $# -lt 1 ];then
+		oldhosts="`virsh list --all|awk 'NR>2{if(NF==0)exit;print $2}'`"
+		if [ -z "$oldhosts" ];then
+			echo $macaddr
+			exit
+		fi
+		oldmacs="`for i in $oldhosts; do virsh domiflist \$i|awk 'NR==3{print \$5}'; done`"
+	else
+		oldmacs=$@
+	fi
+	if [ -z "`echo $oldmacs|grep macaddr`" ];then
+		echo $macaddr
+		exit
+	fi
+	mac_gen $oldmacs
+
+}
+
+function screenshot
+{
+	#Guest name
+	VM=$1
+	if ! virsh domstate $VM &>/dev/null ;then
+		echo "Machie does NOT exist, please check"
+		return 2
+	fi
+
+	#Path name, default is /tmp/virt-install_screenshot/
+	[ -d /tmp/virt-install_screenshot/ ] ||	mkdir -p /tmp/virt-install_screenshot/
+	chmod 777 /tmp/virt-install_screenshot/
+
+	screen_path=$2
+
+
+	#with logfile
+	ext_log=$3
+
+		if [ -d "$screen_path" ];then
+			screen_file="$screen_path/${VM}_screenshot"
+		elif [ -n "$screen_path" ] && mkdir -p "$screen_path" &>/dev/null ;then
+			screen_file="$screen_path/${VM}_screenshot"
+		else
+			screen_file="/tmp/virt-install_screenshot/${VM}_screenshot"
+		fi
+	datetag=`date '+%Y_%m%d_%H%M%S'`
+
+	if uname -r|grep -q xen || [ -e /proc/xen/privcmd ];then
+		#For XEN host , connect to monitor directly
+		#Send the 'up' key to stop the screen saver
+
+		#Get the socket file first
+		vm_sock_path=`ps -ef|sed -n "/sed -n/d;/virt_installos/d;/test_full_guest_upgrade/d;/$VM/{s/.*path=//;s/,.*//;p}"`
+
+		nc -U $vm_sock_path <<EOF >/dev/null
+{ "execute": "qmp_capabilities" }
+{ "execute": "send-key", "arguments": { "keys":[ { "type": "qcode", "data": "up" }] } }
+EOF
+		sleep 1
+		#screendump the screenshot
+		nc -U $vm_sock_path <<EOF >/dev/null
+{ "execute": "qmp_capabilities" }
+{ "execute": "screendump", "arguments": { "filename": "$screen_file.$datetag"} }
+EOF
+
+	else
+		#Make sure no screen saver
+		virsh send-key "$VM" KEY_1 &>/dev/null
+		sleep 1
+		virsh qemu-monitor-command --hmp "$VM" "screendump $screen_file.$datetag" &>/dev/null
+	fi
+	#copy the qemu and libvirt log to screenshot dir
+	if [ -n "$ext_log" ];then
+		tar cf $screen_file.${datetag}.libvirt.tar /var/log/libvirt/ &>/dev/null
+	fi
+
+}
+
+function get_ip_by_mac 
+{
+macaddr=$1
+
+if [ -z "$macaddr" ];then
+	echo "mac-err"
+	exit 1
+fi
+
+gip=`grep "DHCPACK.*$macaddr" /var/log/messages|tail -1|grep -Po "\d+\.\d+\.\d+.\d+"`
+if [ -z "$gip" ];then
+	#Ip add won't add to message after SLES 12 sp2 , use dhcpd.leases
+	gip=`cat /var/lib/dhcp/db/dhcpd.leases|awk -v ip="$macaddr" 'BEGIN{RS="lease ";FS="\n"}{if($0~ip){gsub(/ .*/,"",$1);print $1} }'`
+	if [ -z "$gip" ];then
+		echo "mac-err"
+		exit 1
+	else
+		echo $gip
+		exit 0
+	fi
+	echo "mac-err"
+	exit 1
+fi
+
+echo $gip
+
+}
+
+function install_verify()
+{
+	#verify the host installation 
+	#linux will log in to host, windows just ping
+	goname=$1
+	goip=$2
+	if echo $goname|grep "^sle\|^rhel\|^os\|^oes" &>/dev/null ;then
+		#for linux
+		$sshNoPass $guest_user@$goip "cat /etc/issue"
+		ret=$?
+		if [ $ret = 0 ];then
+			echo "pass"
+		else
+			echo "failed"
+		fi
+	else
+		#for win
+
+		ping -c1 $goip
+		ret=$?
+		if [ $ret = 0 ];then
+			echo "pass"
+		else
+			echo "failed"
+		fi
+	fi
+
+}
+
+function t_check
+{
+	sleep 30
+	#guest name
+	goname=$1
+
+	#timeout
+	timeout=$2;
+
+	time_i=0;
+
+	while [ "`virsh domstate $goname|awk 'NR==1{print $NF}'`" != "off" ]
+	do
+		sleep 60
+		screenshot $goname
+		if [ $time_i -gt $timeout ];then
+			echo timeout
+			sleep 5
+			#Get libvirt log
+			screenshot $goname /tmp/virt-install_screenshot/ log
+			virsh destroy $goname
+			exit 2
+		fi
+		if ! virsh domstate $goname &>/dev/null ;then
+			echo "Machie does NOT exist, please check"
+			exit 2
+		fi
+		sleep 60
+		time_i=$((time_i + 1))
+	done
+
+	echo "1th step installation was finished"
+}
+
+function p_check
+{
+	#use #ping to check the second step work
+	#guest name
+	goname=$1
+	#timeout
+	timeout=$(($2-10))
+	time_i=0;
+	#ip address of guest
+	gip=$3
+
+	virsh start $goname
+	sleep 600  #Give host 10mis to finish step 2 installation
+
+
+	while ! ping -c1 $gip &>/dev/null
+	do
+		sleep 60
+		screenshot $goname
+		if [ $time_i -gt $timeout ];then
+			echo "Second step setup for installation timeout"
+			sleep 5
+			#Get libvirt log
+			screenshot $goname /tmp/virt-install_screenshot/ log
+			echo "reset the guest for one more test"
+			virsh destroy $goname
+			sleep 2
+			virsh start $goname
+			echo "5mis waiting for boot"
+			sleep 300   #5mis bootup
+			return
+		fi
+		if ! virsh domstate $goname &>/dev/null ;then
+			echo "Machie does NOT exist, please check"
+			exit 2
+		fi
+		sleep 60
+		time_i=$((time_i + 1))
+	done
+	#Host is online
+	echo "installation was finished, host is online"
+}
+
+
+function pxe_setup
+{
+
+	macaddr=$1
+	hostip=$2
+
+	if [ "$method" = "net" ];then
+		#first try ftp.
+		inst_tag="source.ftp.$operatingsystem-$release-$servicepack-$architecture"
+		ftp_repo=`$getSource $inst_tag`
+		install_repo=$ftp_repo
+		#try http if ftp does not work
+		if [ -z "$ftp_repo" ];then
+			inst_tag="source.http.$operatingsystem-$release-$servicepack-$architecture"
+			http_repo=`$getSource $inst_tag`
+			install_repo=$http_repo
+		fi
+	fi
+
+
+
+
+	pxe_os=OOPS
+	pxe_rl=OOPS
+	pxe_sp=OOPS
+	pxeInstallSource=OOPS
+	pxeInstallOptions=OOPS
+	autoInstallationType=OOPS
+	installBootOption=OOPS
+	if [ "$architecture" == "32" ] || [ "$architecture" == "32p" ]
+	then
+		archFolder="ix86"
+	elif [ "$architecture" == "64" ]
+	then
+		archFolder="x86_64"
+	fi
+
+	autoyastFileName="$goname"
+	if echo "$operatingsystem" | grep -q '^sle[sd]\|oes$'
+	then
+		autoInstallationType="autoyast"
+		installBootOption="install"
+		os_type=suse
+		pxe_os="$operatingsystem"
+		pxe_rl="$release"
+		pxe_sp="$servicepack"
+		pxeInstallOptions="ro quiet splash vga=0x317"
+		pxeInstallSource=$install_repo
+	elif [ "$operatingsystem" == "os" ]
+	then
+		autoInstallationType="autoyast"
+		installBootOption="install"
+		pxe_os="opensuse"
+		os_type=suse
+		pxe_rl="$release"
+		pxe_sp="$servicepack"
+		pxeInstallOptions="ro quiet splash vga=0x317"
+		pxeInstallSource=$install_repo
+	elif [ "$operatingsystem" == "rhel" ]
+	then
+		pxe_os="$operatingsystem"
+		os_type="$operatingsystem"
+		rm -rf /srv/www/htdocs/install/autoyast/$autoyastFileName
+		mkdir /srv/www/htdocs/install/autoyast/$autoyastFileName 2> /dev/null
+		autoyastFileName="$autoyastFileName/ks.cfg"
+		autoInstallationType="ks"
+		installBootOption="method"
+		pxe_rl="$release"
+		pxe_sp="$servicepack"
+		pxeInstallOptions="noipv6"
+		pxeInstallSource=$install_repo
+	fi
+
+	if [ "$pxe_os" == "OOPS" ] || [ "$pxe_rl" == "OOPS" ] || [ "$pxe_sp" == "OOPS" ] || [ "$archFolder" == "OOPS" ] || [ "$pxeInstallSource" == "OOPS" ] || [ "$pxeInstallOptions" == "OOPS" ] || [ "$autoInstallationType" == "OOPS" ] || [ "$installBootOption" == "OOPS" ]
+	then
+		tmpError="PXE os --$pxe_os--, PXE release --$pxe_rl--, PXE sp --$pxe_sp--, folder three --$archFolder--, autoinstallation type --$autoInstallationType--, install boot option --$installBootOption--, pxe install source --$pxeInstallSource-- or pxe install options --$pxeInstallOptions-- not set correctly"
+		echo "ERROR - $tmpError"
+		echo "ERROR - $tmpError" >&2
+		echo "    ***** INSTALL ERRORED *****"
+		exit $rFAILED
+	fi
+
+	#Down the kernel/initrd
+	mkdir -p /tftpboot/qa-virtauto/$pxe_os/$pxe_rl/$pxe_sp/$archFolder/
+	cd /tftpboot/qa-virtauto/$pxe_os/$pxe_rl/$pxe_sp/$archFolder
+	if [ -e linux -a -e initrd ];then
+		echo "File Exist! skip download"
+	else
+		if ! /usr/share/qa/virtautolib/lib/download_pxe_bootfiles.sh -ik -a $archFolder -s "$install_repo" -o $os_type ; then
+			tmpError="Unable to download initrd&kernel image"
+			echo "ERROR - $tmpError" >&2
+			echo "    ***** INSTALL ERRORED *****"
+			exit $rFAILED
+		fi
+	fi
+
+
+	#get tftp config dir
+	tftproot="/tftpboot"
+	pxeconfig="$tftproot/pxelinux.cfg/01-`echo $macaddr|sed 's/:/-/g'`"
+	autoyastURL="http://$hostip/install/autoyast/$autoyastFileName"
+	httplocal="/srv/www/htdocs/install/autoyast"
+	install_scenario="/usr/share/qa/virtautolib/data/autoinstallation/$operatingsystem/$release/$servicepack/$architecture/$virttype/$scenario"
+	cp $install_scenario $httplocal/$autoyastFileName 2> /dev/null
+
+	# Echo out the text to the
+	echo "default $goname" > $pxeconfig 2> /dev/null
+	echo >> $pxeconfig 2> /dev/null
+	echo "label $goname" >> $pxeconfig 2> /dev/null
+	echo "        kernel qa-virtauto/$pxe_os/$pxe_rl/$pxe_sp/$archFolder/linux" >> $pxeconfig 2> /dev/null
+
+	echo "        append initrd=qa-virtauto/$pxe_os/$pxe_rl/$pxe_sp/$archFolder/initrd $pxeInstallOptions $installBootOption=$pxeInstallSource $autoInstallationType=$autoyastURL $customInstallBootOption" >> $pxeconfig 2> /dev/null
+
+}
+
+function get_install_url_location
+{
+	#first try ftp.
+	inst_tag="source.ftp.$operatingsystem-$release-$servicepack-$architecture"
+	ftp_repo=`$getSource $inst_tag`
+	install_repo=$ftp_repo
+	#try http if ftp does not work
+	if [ -z "$ftp_repo" ];then
+		inst_tag="source.http.$operatingsystem-$release-$servicepack-$architecture"
+		http_repo=`$getSource $inst_tag`
+		install_repo=$http_repo
+	fi
+	echo "$install_repo"
+}
+
+function get_install_iso_location
+{
+	inst_tag="source.iso.$operatingsystem-$release-$servicepack-$architecture"
+	ftp_repo=`$getSource $inst_tag`
+	install_repo=$ftp_repo
+	echo "$install_repo"
+}
+
+function get_ik_opt
+{
+	#get install kernel option
+
+	hostip=$1
+	#where the autoyast keep :  iso/url
+	save_type=$2
+
+
+	autoInstallationType=OOPS
+
+	autoyastFileName="$goname"
+	if echo "$operatingsystem" | grep -q '^sle[sd]\|oes$'
+	then
+		autoInstallationType="autoyast"
+	elif [ "$operatingsystem" == "os" ]
+	then
+		autoInstallationType="autoyast"
+	elif [ "$operatingsystem" == "win" ]
+	then
+		autoInstallationType="notused"
+	elif [ "$operatingsystem" == "rhel" ]
+	then
+		rm -rf /srv/www/htdocs/install/autoyast/$autoyastFileName
+		mkdir /srv/www/htdocs/install/autoyast/$autoyastFileName 2> /dev/null
+		autoyastFileName="$autoyastFileName/ks.cfg"
+		autoInstallationType="ks"
+	fi
+
+	if [ "$autoInstallationType" == "OOPS" ]
+	then
+		tmpError="autoinstallation type --$autoInstallationType--, install boot option --$installBootOption--, install source --$InstallSource-- or install options --$InstallOptions-- not set correctly"
+		echo "ERROR - $tmpError"
+		echo "ERROR - $tmpError" >&2
+		echo "    ***** INSTALL ERRORED *****"
+		exit $rFAILED
+	fi
+
+
+	install_scenario="/usr/share/qa/virtautolib/data/autoinstallation/$operatingsystem/$release/$servicepack/$architecture/$virttype/$scenario"
+
+	if [ "$save_type" = "iso" ];then
+		rm -rf /tmp/$goname.$$
+		mkdir -p /tmp/$goname.$$/yast
+		if [ "$operatingsystem" = "win" ];then
+			cp -ar $install_scenario /tmp/$goname.$$/yast/AutoUnattend.xml
+		else
+			cp -ar $install_scenario /tmp/$goname.$$/yast/${autoyastFileName##*/}
+		fi
+		#mkiso 
+		mkisofs -J -o /tmp/$goname.$$/yast.iso /tmp/$goname.$$/yast/
+		if [ "$operatingsystem" = "win" ];then
+			echo "$autoInstallationType,/tmp/$goname.$$/yast.iso"
+		else
+			echo "$autoInstallationType=device://sr0/${autoyastFileName##*/},/tmp/$goname.$$/yast.iso"
+		fi
+
+	else
+		#by default , print the url
+		autoyastURL="http://$hostip/install/autoyast/$autoyastFileName"
+		httplocal="/srv/www/htdocs/install/autoyast"
+		cp $install_scenario $httplocal/$autoyastFileName 2> /dev/null
+		echo
+		echo "$autoInstallationType=$autoyastURL"
+	fi
+
+}
+
+function ZYPPER() {
+	#try zypper command multiple times to hopefully work across network failure
+	args=$@
+	maxTry=3
+	waitTime=60
+	if ! echo $args | grep "non-interactive" >/dev/null;then
+		args="--non-interactive "$args
+	fi
+
+	if ! echo $args | grep "gpg-auto-import-keys" >/dev/null;then
+		args="--gpg-auto-import-keys "$args
+	fi
+
+	for ((count=0;count<$maxTry;count++));do
+		output=`zypper $args 2>&1`
+		ret=$?
+		if [ $ret -eq 4 ];then
+			sleep $waitTime
+			continue
+		else
+			break
+		fi
+	done
+
+	echo "$output"
+	return $ret
+}
+
+
+function _add_item_zypp_conf() {
+        #$1 = solver.allowVendorChange
+	itemname=$1
+        zyppconfpath=/etc/zypp/zypp.conf
+        if [ -f ${zyppconfpath} ];then
+           if grep "${itemname}" ${zyppconfpath} > /dev/null;then
+           	sed -i "/${itemname}.*=.*false/s/.*/${itemname} = true/;/#${itemname}.*=.*true/s/.*/${itemname} = true/" $zyppconfpath
+                echo "Activate item ${itemname} in ${zyppconfpath}"
+           else
+                sed -i "$ a${itemname} = true" ${zyppconfpath}
+                echo "Add item ${itemname} to ${zyppconfpath}"
+	   fi
+        fi
+
+}
+
+
+function update_virt_rpms() {
+	#update virtualization related rpms
+	echo -e "\nExecuting update virt related rpms..."
+	#Hardcode
+	getSettings="/usr/share/qa/virtautolib/lib/get-settings.sh"
+	getSource="/usr/share/qa/virtautolib/lib/get-source.sh"
+
+	rebootFlag=$1
+	updateRareFlag=$2
+	updateVirtFlag=$3
+	milestoneTestRepo=$4
+
+	if ! uname -r|grep -iq xen && [ ! -e /proc/xen/privcmd ];then
+		HOST_HYPERVISOR='kvm'
+	else
+		HOST_HYPERVISOR='xen'
+	fi
+
+	#Detect product
+	PRODUCT=`/usr/share/qa/tools/product.pl -n|tr '[A-Z]' '[a-z]'|tail -1|sed 's/-[^-]\+$//'`
+	#Only For 64 bit
+	PRODUCT="${PRODUCT}-64"
+
+	release=`echo $PRODUCT | cut -d'-' -f 2`
+
+
+	#RPM list
+	virtPatterns="${HOST_HYPERVISOR}_server ${HOST_HYPERVISOR}_tools"
+	virtPatternRpms=""
+	for pattern in $virtPatterns;do
+		if ZYPPER se -t pattern | grep -iq $pattern ;then
+			echo "Will update rpms in pattern $pattern..."
+			virtPatternRpms+=`ZYPPER info -t pattern $pattern | sed -n '/^\s*--+/,$p' | sed '1d' | gawk -F\| '{print $2}'`
+		fi
+	done
+	echo "Debug info: the virtPatternRpms to be updated are:"
+	echo $virtPatternRpms
+	echo
+
+	#install rpms on product repo
+	for rpm in $virtPatternRpms;do
+		ZYPPER --non-interactive --gpg-auto-import-keys in -l $rpm
+		ret=$?
+		echo "Debug info: return code for rpm $rpm is $ret."
+		if [ $ret -ne 0 -a $ret -ne 104 ];then
+			echo "The rpm $rpm exists in the repo, but not installed successfully."
+			return $ret
+		fi
+	done
+	echo -e "\nInstall virtualization rpms to ${PRODUCT}'s repo is finished successfully!\n"
+
+	#add update repo
+	#std mode, add product's update repo or customized given repo
+	if [ "$updateRareFlag" = "on" ];then
+        if [ -n "$milestoneTestRepo" ];then
+                rareUpdateRepo=$milestoneTestRepo
+        else
+                rareUpdateRepo=`$getSource source.virtupdate.${PRODUCT}`
+        fi		
+		if zypper lr -u | grep rareUpdateRepo >/dev/null;then
+			ZYPPER rr rareUpdateRepo
+		fi
+		if [ -n "$rareUpdateRepo" ];then
+			ZYPPER addrepo ${rareUpdateRepo} rareUpdateRepo || { echo "Add ${PRODUCT}'s update repo failed!"; return 2; }
+			ZYPPER refresh rareUpdateRepo || { echo "Refresh ${PRODUCT}'s update repo failed!"; return 2; }
+			echo -e "\nWarning: Update virt rpms to ${PRODUCT}'s update repos now...\n"
+		else
+			echo -e "\nWarning: No update repo set up, install virt rpms to ${PRODUCT}'s repos now...\n"
+		fi
+	fi
+	#devel mode, add virt-devel/virt-test repos
+	if [ "$updateVirtFlag" = "on" ];then
+		virtDevelRepo=`$getSource source.virtdevel.${PRODUCT}`
+		virtTestRepo=`$getSource source.virttest.${PRODUCT}`
+		if [ -z "$virtDevelRepo" -o -z "$virtTestRepo" ];then
+			echo "Update related repos for devel mode are not set correctly, please check /usr/share/qa/virtautolib/data/sources.local!"
+			return 2
+		fi
+		
+		#add repos 
+		if zypper lr -u | grep virtDevelRepo >/dev/null;then
+			ZYPPER rr virtDevelRepo
+		fi
+		ZYPPER addrepo ${virtDevelRepo} virtDevelRepo || { echo "Add virt-devel repo failed!"; return 2; }
+		ZYPPER refresh virtDevelRepo || { echo "Refresh virt-devel repo failed!"; return 2; }
+		if zypper lr -u | grep virtTestRepo >/dev/null;then
+			ZYPPER rr virtTestRepo
+		fi
+		ZYPPER addrepo ${virtTestRepo} virtTestRepo || { echo "Add virt-test repo failed!"; return 2; }
+		ZYPPER refresh virtTestRepo || { echo "Refresh virt-test repo failed!"; return 2; }
+		echo -e "\nWarning: Update virt rpms to virt-devel/virt-test repos forcefully now...\n"
+	fi
+
+	#change zypper.conf to allow vendor change for devel test
+	_add_item_zypp_conf "solver.allowVendorChange"
+	echo -e "\nChange zypper to allow vendor change is set up!\n"
+
+	#remove unnecessary blocking rpm xen-kmp-default for devel
+	if [ "$updateVirtFlag" = "on" ];then
+		ZYPPER --non-interactive rm --force-resolution xen-kmp-default
+	fi
+
+	#update virt rpms to the added repo
+	ZYPPER --non-interactive --gpg-auto-import-keys up -l --no-recommends --force-resolution
+	if [ $? -eq 0 ];then
+		echo -e "\nUpdate virtualization rpms to added repo is finished successfully!\n"
+	else
+		echo "Error: Update virtualization rpms to added repo failed!"
+		return 2
+	fi
+
+	#special workaround for libpango bug for upgrade host
+	if [ $release -eq 11 ];then
+		specialWorkaroundRepo=`$getSource source.virtupdate.sles-11-sp1-64`
+		if ! (zypper lr -u | grep -q specialWorkaroundRepo);then
+			zypper --non-interactive --gpg-auto-import-keys ar $specialWorkaroundRepo specialWorkaroundRepo
+		fi
+		zypper --non-interactive --gpg-auto-import-keys ref specialWorkaroundRepo
+		zypper --non-interactive --gpg-auto-import-keys up pango*
+		if [ $? -eq 0 ];then
+			echo -e "\nUpdate pango related rpms to sle11sp1 udpate repo is finished successfully!\n"
+		else
+			echo "Error: Update pango related rpms to sle11sp1 udpate repo failed!"
+			return 2
+		fi
+		zypper mr -d specialWorkaroundRepo
+		echo -e "\nDisable sle11 specialWorkaroundRepo return code is: $?\n"
+
+	fi
+
+	if [ "$updateRareFlag" = "on" -o "$updateVirtFlag" = "on" ];then
+		echo -e "\nNeed to reboot system to make the rpms work! \n"
+		[ "$rebootFlag" = "on" ] && reboot
+	else
+		echo "Neither update rpm flag is on, go to next step!"
+	fi
+
+	return 0
+}
+
+function get_os_release() {
+	grep "VERSION" /etc/SuSE-release | sed 's/^.*VERSION = \(.*\)\s*$/\1/'
+}
+
+function get_os_spack() {
+    grep "PATCHLEVEL" /etc/SuSE-release | sed 's/^.*PATCHLEVEL = \(.*\)\s*$/\1/'
+}
+
+#TO BE re-implemented in project files according to different rules about what vms to be installed for different projects
+#Input: config file for one vm with format item=content lines
+#function whether_install_vm() {
+#	configFile=$1
+#	vmProducts=$2
+#	return 0
+#}
+
+function whether_install_vm() {
+	configFile=$1
+	vmProducts=$2
+
+	if [ -z "$vmProducts" ];then
+		#install any kind of vm in config file
+		return 0
+	else
+		vmName=`$getSettings -p VM_NAME -s $configFile`
+		if [[ $vmName != *win* ]];then
+			vmName=${vmName/fcs/sp0}
+		fi
+		for product in ${vmProducts//,/ };do
+			if [[ $vmName == *${product}* ]];then
+				return 0
+			fi
+		done
+
+	fi
+	return 1
+}
+
+function clean_environment() {
+	bash /usr/share/qa/qa_test_virtualization/cleanup
+	vmList=`virsh list --all | sed -n '/^-/,$p' | sed '1d;/Domain-0/d' | gawk '{print $2;}'`
+	echo "$vmList" | xargs -t -i virsh destroy {} >/dev/null 2>&1
+	echo "$vmList" | xargs -t -i virsh undefine {} >/dev/null 2>&1
+
+}
+
+function check_virt_type() {
+	vmVirtType=$1
+	if uname -r | grep xen >/dev/null || [ -e /proc/xen/privcmd ];then
+		return 0
+	else
+		if [ "$vmVirtType" = "fv" ];then
+			return 0
+		else
+			return 1
+		fi
+	fi
+}
+
+function change_vm_on_crash() {
+	echo -e "\nExecuting change the on_crash behavior of vm..."
+	local vmNameList=`virsh list --all --name | sed '/Domain-0/d'`
+	tmpDir=/tmp/$$
+	mkdir $tmpDir
+	for vm in $vmNameList;do
+		virsh dumpxml $vm > ${tmpDir}/${vm}.xml
+		if grep -qi "on_crash" ${tmpDir}/${vm}.xml;then
+			sed -i "s/<on_crash>.*</<on_crash>coredump-destroy</" ${tmpDir}/${vm}.xml
+			virsh undefine $vm
+			virsh define ${tmpDir}/${vm}.xml
+			virsh create ${tmpDir}/${vm}.xml
+			virsh destroy $vm
+		fi
+	done
+	rm $tmpDir -r
+}
+
+#input: vmGuestsConfigFile
+function install_vm_guests() {
+	# Install VM Guests from VM configuration file using virt-install
+	echo -e "\nExecuting VM installation according to custom VM config file ..."
+	vmGuestsConfigFile=$1
+	vmProducts="$2"
+
+	if [ -z "$vmGuestsConfigFile" ];then
+		vmGuestsConfigFile=/usr/share/qa/virtautolib/data/vm_guest_config_in_vh_update
+	fi
+
+	getSettings="./get-settings.sh"
+
+	echo -e "\nExecuting cleaning environment before installing vms..."
+	clean_environment
+	# Support multiple VMs configured in the same VM configuration file
+	cfgItemStartIndexArr=(`sed -n "/^\s*VM_NAME/=" $vmGuestsConfigFile`)
+	#echo "Debug info: cfgItemStartIndexArr content:${cfgItemStartIndexArr[*]},item num:${#cfgItemStartIndexArr[*]}"
+	tmpCfgFile="/tmp/tmpVmCfg.$$"
+	declare -i item
+
+	installVmTcf="/tmp/VmInstall-$$.tcf"
+	maxParallelVM=`$getSettings MAX_PARALLELL_INSTALL_VM_NUMBER`
+	[ -z $maxParallelVM ] && maxParallelVM=2
+	timeout=3600
+	toInstallVMNum=0
+
+	for ((item=0; item<${#cfgItemStartIndexArr[*]};item++));do
+		if [ $item = $((${#cfgItemStartIndexArr[*]}-1)) ];then
+			# only config one vm
+			if [ ${#cfgItemStartIndexArr[*]} = 1 ];then
+				cp $vmGuestsConfigFile $tmpCfgFile || echo "The first vm tmpCfgFile failed to be created."
+			else
+			# the last vm config
+				sed -n -e "${cfgItemStartIndexArr[$item]},\$p" $vmGuestsConfigFile > $tmpCfgFile || echo "The last vm tmpCfgFile failed to be created."
+			fi
+		else
+			sed -n -e "${cfgItemStartIndexArr[$item]},$((${cfgItemStartIndexArr[$(($item+1))]}-1))p" $vmGuestsConfigFile > $tmpCfgFile || echo "The tmpCfgFile for VM failed to be created."
+		fi
+		echo -e "\nDebug info: verifying configuration for the VM:" && cat $tmpCfgFile | sed '/^#/d'
+
+		#Get config
+		VM_NAME=`$getSettings -p VM_NAME -s $tmpCfgFile`
+		VM_AUTOINSTALL=`$getSettings -p VM_AUTOINSTALL -s $tmpCfgFile`
+		VM_RAM=`$getSettings -p VM_RAM -s $tmpCfgFile`
+		VM_FILEDATA=`$getSettings -p VM_FILEDATA -s $tmpCfgFile`
+		VM_FILESIZE=`$getSettings -p VM_FILESIZE -s $tmpCfgFile`
+		VM_NETWORK=`$getSettings -p VM_NETWORK -s $tmpCfgFile`
+		VM_REPO=`$getSettings -p VM_LOCATION -s $tmpCfgFile`
+		VM_EXTRAARGS=`$getSettings -p VM_EXTRAARGS -s $tmpCfgFile`
+
+		#parse from vm_name
+        OIFS=$IFS
+        IFS="-"
+        A_DEF=(${VM_NAME})
+        IFS=$OIFS
+        VM_PRODUCT=${A_DEF[0]}
+        VM_RELEASE=${A_DEF[1]}
+        VM_SPACK=${A_DEF[2]}
+        VM_ARCH=${A_DEF[3]}
+        VM_VIRTT=${A_DEF[4]}
+        VM_INSTALL_SCENARIO=${A_DEF[5]}
+        VM_INSTALL_METHOD=${A_DEF[6]}
+
+		#Only install VMs pass check from func whether_install_vm and check_virt_type
+		if whether_install_vm "$tmpCfgFile" "$vmProducts" && check_virt_type $VM_VIRTT;then
+			echo -e "\nValid VM configuration to be installed!\n"
+			((toInstallVMNum++))
+		else
+			continue
+		fi
+
+		#Generate args
+		args="-o $VM_PRODUCT -r $VM_RELEASE -p $VM_SPACK -c $VM_ARCH -t $VM_VIRTT -n $VM_INSTALL_SCENARIO -m $VM_INSTALL_METHOD"
+
+		osRelease=`get_os_release`
+
+        if [ $osRelease -lt 12 ];then
+			installTool=/usr/share/qa/virtautolib/lib/vm-creation-via-vm-install.sh
+			if [ -n "$VM_FILEDATA" ];then
+				supportDiskList="., file, iscsi, nbd, npiv, phy, tap:aio, tap:qcow, tap:qcow2, vmdk"
+				searchPattern=$VM_FILEDATA
+				[ "$VM_FILEDATA" = "." ] && searchPattern="\\"$VM_FILEDATA
+				if echo $supportDiskList | grep "$searchPattern" >/dev/null ;then
+					if [ "$VM_FILEDATA" = "qcow" -o "$VM_FILEDATA" = "qcow2" -o "$VM_FILEDATA" = "aio" ];then
+						VM_FILEDATA="tap:"${VM_FILEDATA}
+					fi
+					args=${args}" -D $VM_FILEDATA"
+				else
+					echo "The given disk format for $VM_NAME is $VM_FILEDATA, not supported, support list is: $supportDiskList" >&2
+					return 1
+				fi
+            fi
+			[ -n "$VM_FILESIZE" ] && args=${args}" -d $(($VM_FILESIZE*1024))"
+			[ -n "$VM_RAM" ] && args=${args}" -e $VM_RAM"
+			[ -n "$VM_NETWORK" ] && args=${args}" -b $VM_NETWORK"
+			[ -n "$VM_REPO" ] && args=${args}" -f $VM_REPO"
+			[ -n "$VM_AUTOINSTALL" ] && args=${args}" -A ${VM_AUTOINSTALL}"
+			[ -n "$VM_EXTRAARGS" ] && echo "Warning: ignore VM_EXTRAARGS when installing vm with vm-install.sh" >&2
+			[ -n "$VM_NAME" ] && args=${args}" -F $VM_NAME"
+
+			args=${args}" -y 192.168.123.1 -b br123 -P /usr/share/qa/qa_test_virtualization/loc/settings.standalone -g -k"
+
+			args="$VM_NAME \"$args\" \"$((((toInstallVMNum-1)%maxParallelVM)*30))\""
+        else
+            installTool=/usr/share/qa/virtautolib/lib/virt-install.sh
+			if [ -n "$VM_FILEDATA" ];then
+				supportDiskList="vvfat vpc vmdk vdi sheepdog raw host_cdrom host_floppy host_device file qed qcow2 qcow \
+								 parallels nbd dmg tftp ftps ftp https http cow cloop bochs blkverify blkdebug"
+				searchPattern=$VM_FILEDATA
+				[ "$VM_FILEDATA" = "." ] && searchPattern="\\"$VM_FILEDATA
+				if echo $supportDiskList | grep "$searchPattern" >/dev/null ;then
+					args=${args}" -f $VM_FILEDATA"
+				else
+					echo -e "The given disk format for $VM_NAME is $VM_FILEDATA, not supported, support list is:" >&2
+					echo $supportDiskList | sed 's/\t//g;s/  //g' >&2
+					return 1
+				fi
+			fi
+			[ -n "$VM_FILESIZE" ] && args=${args}" -s $VM_FILESIZE"
+			[ -n "$VM_RAM" ] && args=${args}" -k $VM_RAM"
+			[ -n "$VM_NETWORK" ] && args=${args}" -b $VM_NETWORK"
+			[ -n "$VM_REPO" ] && args=${args}" -l $VM_REPO"
+			[ -z "$VM_REPO" ] && args=${args}" -d"
+			[ -n "$VM_AUTOINSTALL" ] && args=${args}" -x \"autoyast=${VM_AUTOINSTALL}"
+			if [ -n "$VM_EXTRAARGS" ];then
+				if [ -n "$VM_AUTOINSTALL" ];then
+					args=${args}" ${VM_EXTRAARGS}\""
+				else
+					args=${args}" -x \"${VM_EXTRAARGS} \""
+				fi
+			else
+				if [ -n "$VM_AUTOINSTALL" ];then
+					args=${args}"\""
+				fi
+			fi
+
+			args=${args}" -u"
+			args=${args}" -g $VM_NAME"
+        fi
+
+		#Generate script for ctcs2 to run to support parallel vm install
+		if [ $((toInstallVMNum%maxParallelVM)) -eq 1 ];then
+			if [ $toInstallVMNum -ne 1 ];then
+				echo -e "wait\n" >> $installVmTcf
+			fi
+			if [ $toInstallVMNum -eq 1 -a $osRelease -ge 12 ];then
+				echo "timer $(($timeout+2400))" >> $installVmTcf
+			else
+				echo "timer $timeout" >> $installVmTcf
+			fi
+		fi
+		if [ $osRelease -ge 12 ];then
+			if [ $toInstallVMNum -eq 1 ];then
+				cmd="fg 1 $VM_NAME $installTool $args"
+			else
+				cmd="bg 1 $VM_NAME $installTool $args"
+			fi
+			echo "$cmd" >> $installVmTcf
+		else
+			#work around for ctcs2 bug of parsing double quote
+			echo "bash $installTool $args" > /tmp/installVm${item}.sh
+			echo "Debug: /tmp/installVm${item}.sh content is " && cat /tmp/installVm${item}.sh
+			chmod +x /tmp/installVm${item}.sh
+			echo "bg 1 $VM_NAME /tmp/installVm${item}.sh" >> $installVmTcf
+		fi
+
+	done
+
+	rm $tmpCfgFile >/dev/null 2>&1
+
+	if [ $toInstallVMNum -ne 0 ];then
+		echo -e "wait\n" >> $installVmTcf
+	else
+		echo "No VM needs to be installed on the host from config file: $vmGuestsConfigFile."
+		return 1
+	fi
+
+	#Parallelly install VMs
+	echo -e "\nThe tcf file to be executed is:\n"
+	cat $installVmTcf
+	sed -i '/win/a wait\n\ntimer 3600' $installVmTcf
+	echo -e "\nAfter changing for windows, the tcf file to be executed is:\n"
+	cat $installVmTcf
+	ctcs2Tool=/usr/lib/ctcs2/tools/run
+	echo -e "\nInstalling VMs..."
+
+	#set up env before install vm
+	source /usr/share/qa/qa_test_virtualization/shared/standalone
+	#wait for set up to take effect
+	sleep 180
+
+	$ctcs2Tool $installVmTcf | tee ${installVmTcf}.log
+	retCode=$?
+	rm $installVmTcf
+	if [ $osRelease -lt 12 ];then
+		rm /tmp/installVm*.sh
+	fi
+
+    #vhUpdateVMInstall*
+	if [ $retCode -ne 0 ] || grep -E "Test run completed with errors|Tests with internal errors|\.\.\. SKIPPED|\.\.\. TIMEOUT" ${installVmTcf}.log >/dev/null \
+           || [ `find /var/log/qa/ctcs2/VmInstall-* -name test_results -exec grep "^[0-9] 0" {} \; | wc -l` -ne 0 ];then
+		echo "VM installation failed!"
+		rm ${installVmTcf}.log
+		return 1
+	else
+		rm ${installVmTcf}.log
+		echo "Install all VMs finished successfully!"
+		return 0
+	fi
+
+}
+
+function handle_installation_failed_guests() {
+	failedGuestLogFile=$1
+	if [ -z "$failedGuestLogFile" ];then
+		failedGuestLogFile=/var/log/qa/virt_autotest/InstallationFailedGuestList
+	fi
+	mkdir -p `dirname $failedGuestLogFile`
+	if [ -f "$failedGuestLogFile" ];then
+		mv $failedGuestLogFile ${failedGuestLogFile}.old
+	fi
+	
+	#get failed guest list and record the failed list, and remove them from virsh list
+	for file in `ls /var/log/qa/ctcs2/VmInstall*/sles* /var/log/qa/ctcs2/VmInstall*/win*`;do
+		if grep -Eqi "1 fail|1 internal_error|1 skipped" $file;then
+			failedGuest=`basename $file`
+			echo "Debug Info: Find installation failed guest $failedGuest"
+			echo "Debug Info: Record the guest $failedGuest in log file $failedGuestLogFile..."
+			echo "$failedGuest" >> $failedGuestLogFile
+			echo "Debug Info: Undefine the guest $failedGuest from virsh..."
+			virsh destroy $failedGuest >/dev/null 2>&1
+			virsh undefine $failedGuest >/dev/null 2>&1
+		fi
+	done
+	echo "Debug Info: all the installation failed guests from log file $failedGuestLogFile is:"
+	cat $failedGuestLogFile
+}
+
+function show_guest_installation_failures() {
+	failedGuestLogFile=$1
+	if [ -z "$failedGuestLogFile" ];then
+		failedGuestLogFile=/var/log/qa/virt_autotest/InstallationFailedGuestList
+	fi
+
+#	echo "Debug info: backup directory content is:"
+#	ls -R `dirname $failedGuestLogFile`
+#	echo "Debug info: the content of file $failedGuestLogFile is:"
+#	cat $failedGuestLogFile
+#	echo "Debug end"
+
+	if [ ! -f $failedGuestLogFile ] || ! grep -Evq "^\s*$" $failedGuestLogFile;then
+		echo -e  "\nCongratulations! No guest failed in installation.\n"
+		return 0
+	else
+		echo -e "\nThe guests failed in guest installation phase before core test are:"
+		cat $failedGuestLogFile
+		echo -e "Installation failed guest list done.\n"
+		return 1
+	fi
+}
+
+function backup_vm_guest_data() {
+	#backup XML and image file of all VM guest
+	echo -e "\nExecuting backup for all VMs ..."
+	backupRootDir=$1
+	backupVmListFile=$2
+	backupCfgXmlDir=$3
+	backupDiskDir=$4
+
+	#[ -d $backupRootDir ] && rm -r $backupRootDir
+	mkdir -p $backupRootDir || { echo "Failed to create backup root directory!"; return 1; }
+	mkdir $backupCfgXmlDir
+	mkdir $backupDiskDir
+	echo "The vm backup directory is created as $backupRootDir, the xml config file will be stored in $backupCfgXmlDir and disk image  will be stored in $backupDiskDir."
+
+	# list all VM guest to backup
+	virsh list --all --name | sed '/Domain-0/d' > $backupVmListFile || { echo "List all vm guests to backup in file $backupVmListFile failed!" ; return 1; }
+	sed -i '$d' $backupVmListFile
+
+	#back up each vm
+	for vmName in `virsh list --all --name | sed '/Domain-0/d'`;do
+		echo "Backuping vm $vmName..."
+		# dump and backup the XML config file of VM guest
+		virsh dumpxml $vmName > ${backupCfgXmlDir}/${vmName}.xml || { echo "Backup xml config file for vm $vmName failed!" ; return 1; }
+		#backup the image file of the VM guest
+		diskFile=`virsh dumpxml $vmName | grep "source file=" | sed "s/^\s*<source file='\([^']*\)'.*$/\1/"`
+		cp --parent $diskFile $backupDiskDir || { echo "Backup disk file for vm $vmName failed!"; return 1; }
+
+	done
+	echo "All vm xml config file and disk file backup is finished successfully! You can check $backupRootDir for details."
+	return 0
+}
+
+#output: one line as one complete command 
+function generate_migrate_params() {
+	#for KVM
+	H_type=$1
+	H_proto="qemu+ssh"
+
+	os_rel=`get_os_release`
+	os_sp=`get_os_spack`
+
+	if uname -r|grep -qi xen || [ -e /proc/xen/privcmd ];then
+		H_proto="xen+ssh"
+	fi
+	if [ "$H_type" == "virsh" ] && [ $H_proto == "qemu+ssh" ];then
+		#Migrate function
+		#migrate [--live] [--offline] [--direct] [--p2p [--tunnelled]] [--persistent] [--undefinesource] [--suspend] [--copy-storage-all] [--copy-storage-inc] [--change-protection] [--unsafe] [--verbose] [--compressed]
+		#        [--abort-on-error] domain desturi [migrateuri] [graphicsuri] [listen-address] [dname] [--timeout seconds] [--xml file]
+		#Mtype="live offline"
+		Mtype="live"
+		trans_proto="p2p tunnelled"
+
+		live="LiveArr1"
+		offline="OfflineArr1"
+
+		#LiveArr1="persistent undefinesource change-protection unsafe compressed abort-on-error"
+		LiveArr1="persistent change-protection unsafe compressed abort-on-error"
+		if [ $os_rel -eq 11 -a $os_sp -le 3 ];then
+			LiveArr1=${LiveArr1/ abort-on-error/}
+		fi
+		#LiveArr2="suspend"
+
+		OfflineArr1="copy-storage-all"
+		#OfflineArr2="copy-storage-inc"
+
+
+		for _type in $Mtype
+		do
+			for _proto in $trans_proto
+			do
+				if [ "$_proto" == "tunnelled" ];then
+					#cannot perform tunnelled migration without using peer2peer flag
+					_proto="$_proto --p2p"
+				fi
+				#add post copy migration options which is added from sles12sp2, only in kvm
+				if [ "$Mtype" == 'live' ] && [[ "$_proto" != *tunnelled* ]] && ([ $os_rel -eq 12 -a $os_sp -ge 2 ] || [ $os_rel -gt 12 ]);then
+					post_copy_arr=("" "--postcopy --postcopy-after-precopy" "--postcopy")
+				else
+					post_copy_arr=("")
+				fi
+				for _option in "${post_copy_arr[@]}";do
+					for _arr in ${!_type}
+					do
+						echo -n "virsh migrate "
+						echo -n "--$_type "
+						echo -n "--$_proto "
+						for options in ${!_arr}
+						do
+							echo -n "--$options "
+						done
+					done
+					echo -n "${_option} "
+					echo -n "LOCAL_GUEST $H_proto://REMOTE_HOST/system "
+					echo
+				done
+			done
+		done
+
+	elif [ "$H_type" == "virsh" ] && [ $H_proto == "xen+ssh" ];then
+		#only live and offline, virsh for xen only support 3 options, --live, --undefine source, --paused
+		if [ $os_rel -gt 12 ] || [ $os_rel -eq 12 -a $os_sp -ge 0 ];then
+			echo "virsh migrate --live LOCAL_GUEST $H_proto://REMOTE_HOST/"
+			echo "virsh migrate LOCAL_GUEST $H_proto://REMOTE_HOST/"
+		else
+			echo "virsh migrate --live LOCAL_GUEST $H_proto://REMOTE_HOST/ xenmigr://REMOTE_HOST"
+			echo "virsh migrate LOCAL_GUEST $H_proto://REMOTE_HOST/ xenmigr://REMOTE_HOST"
+		fi
+	elif [ "$H_type" == "xl" ];then
+		#Migrate function
+		#virsh domxml-to-native --format xen-xm --xml sles-11-sp3-64-fv-def-net.xml > cfg
+		#xl migrate [OPTIONS] domain-id host
+		#xl does live migration unconditionally
+		echo "xl migrate LOCAL_GUEST REMOTE_HOST"
+	elif [ "$H_type" == "xm" ];then
+		echo "xm migrate --live LOCAL_GUEST REMOTE_HOST"
+		echo "xm migrate LOCAL_GUEST REMOTE_HOST"
+	fi
+
+}
+
+function virt_log_switch() {
+
+#This function will switch on virtblib,xen,kvm log, and set the level with debug.
+#Log path:
+#/var/log/libvirt  kvm&xen
+#/var/log/xen      xen (under sles11)
+#/var/log/message  kvm&xen
+#
+#live log from cmd:
+#xl/xm dmsg
+#dmesg
+
+
+#we turn on the virtlib log
+#set the log level and log path
+sed -i '/^#log_level/s/.*/log_level = 1/;/^#log_outputs/s@.*@log_outputs="1:file:/var/log/libvirt/libvirtd"@' /etc/libvirt/libvirtd.conf
+
+
+#we turn on the xen log
+
+grub="`find /boot/ -name 'grub.cfg'`"
+
+if [ -z "$grub" ];then
+	grub="`find /boot/ -name 'menu.lst'`"
+fi
+
+if grep -q loglvl $grub ;then
+	echo "Log level is set,ignore setting."
+else
+
+sed -i '/boot\/xen/{s/$/ loglvl=all guest_loglvl=all /}' $grub
+
+fi
+
+}
+
+function getIP() {
+    #Get local machine ip
+    localBridge="`route | grep ^default | awk {'print $NF'}`"
+    IP="`ifconfig $localBridge | grep 'inet addr:' | sed 's/^.*inet addr:\([0-9.]*\) .*$/\1/'`"
+    echo "$IP"
+}
+
+function kvm_hook() {
+
+[ -e /usr/share/qa/virtautolib/data/kvm_hook.sh ] && /usr/share/qa/virtautolib/data/kvm_hook.sh
+
+}
+
+function xen_hook() {
+
+[ -e /usr/share/qa/virtautolib/data/xen_hook.sh ] && /usr/share/qa/virtautolib/data/xen_hook.sh
+
+}
+
+
+function changeXendConfig() {
+	release=`get_os_release`
+	if [ $release -ge 12 ];then
+		return 0
+	fi
+	fileName=/etc/xen/xend-config.sxp
+	cp $fileName ${fileName}.org
+	sed -i "/(xend-port .*)/c \(xend-port 8000\)" $fileName
+	sed -i "/(xend-relocation-port .*)/c \(xend-relocation-port 8002\)" $fileName
+	sed -i "/xend-address .*)/c \(xend-address ''\)" $fileName
+	sed -i "/(xend-relocation-address .*)/c \(xend-relocation-address ''\)" $fileName
+	sed -i "/(xend-relocation-hosts-allow .*)/c \(xend-relocation-hosts-allow '')" $fileName
+	sed -i "/(xend-relocation-server .*)/c \(xend-relocation-server yes\)" $fileName
+	sed -i "/(xend-address localhost)/c #\(xend-address localhost\)" $fileName
+	if [ $release -lt 12 ];then
+		rcxend restart
+	else
+		systemctl restart xendomains.service
+	fi
+}
+
+function changeLibvirtConfig() {
+	release=`get_os_release`
+	if [ $release -ge 12 ];then
+		return 0
+	fi
+	fileName=/etc/libvirt/libvirtd.conf
+	cp $fileName ${fileName}.org
+	sed -i '/listen_tcp =/c listen_tcp = 1' $fileName
+	sed -i '/auth_tcp =/c auth_tcp = "none"' $fileName
+	rclibvirtd restart
+
+}
+
+function rmCdromFromGuest() {
+	local guestName=$1
+	local backupCfgXmlDir=$2
+	echo -e "\nExecuting remove cdrom disks from guest $guestName by redefine guest... \n"
+
+	if [ -z "$backupCfgXmlDir" ];then
+		backupCfgXmlDir=/tmp/virt-install_screenshot/
+	fi
+
+	local newXmlFile=${backupCfgXmlDir}/${guestName}.xml.used.withoutcdromdisk
+
+	virsh destroy $guestName >/dev/null 2>&1
+	virsh dumpxml $guestName > ${backupCfgXmlDir}/${guestName}.xml.org
+	virsh undefine $guestName
+
+	sed '/disk.*cdrom/,/\/disk/d' ${backupCfgXmlDir}/${guestName}.xml.org > $newXmlFile
+	echo "Debug info: the new xml file $newXmlFile without cdrom disks are:"
+	cat $newXmlFile
+
+	virsh define $newXmlFile
+	sleep 1
+	virsh create $newXmlFile
+	sleep 1
+	virsh destroy $guestName
+	echo -e "\nGuest $guestName is defined again without cdrom disk. \n"
+
+}
+
+function get_vm_disk_dir() {
+    #Get the common disk directory for all vms
+    release=`get_os_release`
+    if [ $release -ge 12 ];then
+        allVmDiskDir=/var/lib/libvirt/images
+    else
+        if [ "$hostHypervisor" == "xen" ];then
+            allVmDiskDir=/var/lib/xen/images
+        else
+            allVmDiskDir=/var/lib/kvm/images
+        fi
+    fi
+    echo $allVmDiskDir
+}
+
+function start_vm_by_virttool() {
+    echo -e "Executing start vm by virttool..."
+    local vmName=$1
+    local migrtTool=$2
+
+    if [ "$migrtTool" = "virsh" ];then  
+        vmState=`$migrtTool dominfo $vmName | grep State |  sed 's/State:\s*//'`
+        if [ "$vmState" = 'paused' ] ;then
+            $migrtTool resume $vmName
+        elif [[ "$vmState" = 'shut off' || "$vmState" = 'crashed' ]];then
+            $migrtTool start $vmName
+        elif [[ "$vmState" = 'dying' || "$vmState" = 'shutdown' ]];then
+            sleep 120
+            $migrtTool start $vmName
+        elif [[ "$vmState" = "running" || "$vmState" = 'idle' ]];then
+            echo "The vm is already started."
+        else 
+            return 1
+        fi   
+    else 
+        vmState=`$migrtTool list $vmName | gawk '/-/{print $5}'`
+        if [[ "$vmState" = *p* ]] ;then
+            $migrtTool unpause $vmName
+        elif [[ "$vmState" = *s* ]];then
+            $migrtTool reboot $vmName
+        elif [[ "$vmState" = *r* || "$vmState" = *b* ]];then
+            echo "The vm is already started."
+        #elif [[ "$vmState" = *c* || "$vmState" = *d* ]];then
+        else 
+            return 1
+        fi   
+    fi   
+    return $?
+}
+
+function check_vm_up_by_ssh() {
+    echo -e "\nExecuting check vm up by ssh..."
+    local vmIP=$1
+    local getSettings="/usr/share/qa/virtautolib/lib/get-settings.sh"
+    local sshNoPass="sshpass -e ssh -o StrictHostKeyChecking=no"
+    local user=`$getSettings vm.user`
+    local pass=`$getSettings vm.pass`
+
+    export SSHPASS=$pass
+    $sshNoPass $user@$vmIP "echo 'Test connection by ssh!'" >/dev/null 2>&1 
+    if [ $? -ne 0 ];then
+        return 1
+    else 
+        return 0
+    fi   
+    
+    unset SSHPASS
+}
+
+function ensure_vm_running() {
+    echo -e "Executing ensure vm running..."
+    local vmName=$1
+    local migrateTool=$2
+
+    start_vm_by_virttool $1 $2
+    if [ $? -ne 0 ];then
+        return 1
+    fi
+
+    sshConnection="no"
+    vmMac=`virsh dumpxml $vmName | grep -i "mac address=" | sed "s/^\s*<mac address='\([^']*\)'.*$/\1/"`
+    tryTimes=0
+    maxTryTimes=20
+    while [ $tryTimes -le $maxTryTimes ] && [ "$vmState" != "running" -o "$sshConnection" != "yes" ];do
+        sleep 10
+        vmIP=`get_ip_by_mac $vmMac|tail -1`
+        if [ "$vmIP" = "mac-err" ];then
+            continue
+        fi
+        check_vm_up_by_ssh $vmIP
+        if [ $? -eq 0 ];then
+            vmState="runnning"
+            sshConnection="yes"
+            echo "The vm is up now."
+            #wait some time before migrate
+            sleep 60
+            return 0
+        fi
+        ((tryTimes++))
+    done
+
+    return 1
+}
+
+#columns: testcase, result, reason
+#result type: pass, fail, skip
+function print_migration_result() {
+    columnNum=$1
+
+    maxFieldLen=105
+    fieldIntvlLen=10
+    #echo -e "\nDebug info: \nAll result array items :"
+    #echo ${resultArr[@]}
+
+    echo -e "\n###########################Overall migration result start:#######################\n"
+    for ((i=0;i<$((${#resultArr[@]}/${columnNum}));i++));do
+        testcase=${resultArr[$(($i*$columnNum))]}
+        result=${resultArr[$(($i*$columnNum+1))]}
+        reason=${resultArr[$(($i*$columnNum+2))]}
+        printf "%-${maxFieldLen}s" "$testcase"
+        printf "%2s" "  "
+        for ((j=0;j<$fieldIntvlLen;j++));do
+            printf "%c" "-"
+        done
+        printf "%2s" "  "
+        printf "%-5s" "$result"
+        if [ $result != "pass" ];then
+            printf "%2s" "  "
+            for ((j=0;j<$fieldIntvlLen;j++));do
+                printf "%c" "-"
+            done
+            printf "%2s" "  "
+            printf "%s" "$reason"
+        fi
+        echo
+    done
+	echo -e "\n###########################Overall migration result end.#######################\n"
+}
+
+#store test result per case, format: testcase result reason
+function store_testcase_result() {
+    testcase=$1
+    result=$2
+    reason=$3
+    echo -e "\nExecuting store testcase result: $testcase  --  $result  -- $reason..."
+
+    resultArr+=("$testcase" "$result" "$reason")
+
+    if [ $result == "fail" ];then
+        ((overallMigrateTestRet+=1))
+    fi
+
+    return 0
+
+}
+
+# print plain text information to terminal
+# 2th parameter should on in the range [INFO, ERROR, CRITICL, BANNER, BREAKLINE]    
+function printInfo() {                                                   
+    _info=$1
+    _level=$2                                                            
+    
+    [ -z "${_level}" ] && _level="INFO"                                  
+    
+    if [ ${_level} = "INFO" ];then
+        echo -e "[INFO] : ${_info}"
+    elif [ ${_level} = "ERROR" ];then                                    
+        echo -e "[ERROR] : ${_info}"
+    elif [ ${_level} = "BANNER" ];then                                   
+        echo -n
+        for ((NUM=70; NUM>0; NUM-- ));do                                 
+            echo -e -n  "*"                                              
+        done
+        echo -e "\n  ${_info}"
+        for ((NUM=70; NUM>0; NUM-- ));do                                 
+            echo -e -n "*"                                               
+        done
+        echo -e ""                                                       
+    elif [ ${_level} = "BREAKLINE" ];then
+        infolen=${#_info}
+        prefixlen=4
+        echo -e 
+        for ((NUM=4; NUM>0; NUM-- ));do
+            echo -e -n "="                                               
+        done
+        echo -e -n " ${_info} "
+        for ((NUM=70 - ${infolen} - 2 - ${prefixlen}; NUM>0; NUM-- ));do
+            echo -e -n "="                                               
+        done
+        echo -e "\n\n"
+    fi                                                                   
+}
