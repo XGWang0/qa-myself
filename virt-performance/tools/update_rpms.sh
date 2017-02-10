@@ -30,7 +30,7 @@
 #                 hypervisor type, product version, architecture etc.
 #          USAG: check_run_env.sh -v [HYAPERVISOR kvm/xen] -p PRODUCT i
 #                                 -a ARCH -t [TEST_TYPE std/dev]
-#       EXAMPLE: check_run_env.sh -v kvm -p sles-12-sp2 -a 64 -t std
+#       EXAMPLE: check_run_env.sh -v kvm -t std
 #*******************************************************************************
 
 source /usr/share/qa/virtautolib/lib/virtlib
@@ -46,22 +46,19 @@ function usage() {
     echo ""
     echo "Usage: $0 [-v kvm/xen] [-p product] "
     echo "-v, hypervisor type, xen/kvm supported, default to kvm."
-    echo "-p, product name, default to sles-12-sp1-64"
     echo "-t, test type, default std."
     exit 1
 }
 
-while getopts "v:p:a:t" OPTIONS
+while getopts "v:t:" OPTIONS
 do
     case $OPTIONS in
         v)HYPERVISOR="$OPTARG";;
-        p)PRODUCT="$OPTARG";;
         t)TESTTYPE="$OPTARG";;
         \?)usage;;
         *)usage;;
     esac
 done
-
 
 printInfo "OS ENV CHECKING AND RPMS UPGRADE PHASE START" BREAKLINE
 #-------------------------------------------------------------------------------
@@ -69,8 +66,14 @@ printInfo "OS ENV CHECKING AND RPMS UPGRADE PHASE START" BREAKLINE
 #-------------------------------------------------------------------------------
 
 [ -z "$HYPERVISOR" ] && HYPERVISOR="kvm"
-[ -z "$PRODUCT" ] && PRODUCT="sles-12-sp1-64"
-[ -z "$TESTTYPE" ] && TESTTYPE="std"
+if [[ -n "$TESTTYPE" && ( $TESTTYPE = "std" || $TESTTYPE = "dev" ) ]];then
+    :
+elif [ -z "$TESTTYPE" ];then
+    TESTTYPE="std"
+else
+    printInfo "Using incorrect value to pass to -t parameter." ERROR
+    usage
+fi
 
 #===  FUNCTION  ================================================================
 #          NAME:  check_os_env
@@ -78,7 +81,6 @@ printInfo "OS ENV CHECKING AND RPMS UPGRADE PHASE START" BREAKLINE
 #    PARAMETERS:  
 #       RETURNS:  0 : success
 #                 1 : incorrect hypervisor type
-#                 2 : unexpected os version
 #===============================================================================
 function check_os_env ()
 {
@@ -108,14 +110,9 @@ function check_os_env ()
         printInfo "HYPERVISOR:$_hypervisor"
 
         if [ ! "`echo ${HYPERVISOR} | tr [A-Z] [a-z]`" = "$_hypervisor" ];then
-                echo "Error: You aim to run ${HYPERVISOR} test, but you are on $_hypervisor kernel." >&2
+                printInfo "You aim to run ${HYPERVISOR} test, but you are on $_hypervisor kernel." ERROR >&2
                 exit 1
         fi
-        if [ ! "`echo ${PRODUCT} | tr [A-Z] [a-z]`" = "${_product_full_name}" ];then
-                echo "Error: You aim to run test on product ${PRODUCT}, but you are on ${_product_full_name} platform." >&2
-                exit 2
-        fi
-        
 }    # ----------  end of function check_os_env  ----------
 
 

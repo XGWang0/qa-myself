@@ -1,0 +1,4 @@
+timer 5400
+fg 1 update_rpms /usr/share/qa/tools/check_run_env.sh -v HYPERVISOR -t TESTTYPE
+wait
+
