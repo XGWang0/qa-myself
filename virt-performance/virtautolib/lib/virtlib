@@ -1399,30 +1399,23 @@ function printInfo() {
     [ -z "${_level}" ] && _level="INFO"                                  
     
     if [ ${_level} = "INFO" ];then
-        echo -e "[INFO] : ${_info}"
+        echo -e "[INFO ] : ${_info}"
     elif [ ${_level} = "ERROR" ];then                                    
         echo -e "[ERROR] : ${_info}"
+    elif [ ${_level} = "WARN" ];then                                    
+        echo -e "[WARN ] : ${_info}"
+    elif [ ${_level} = "DASH" ];then                                    
+         printf "\n%75s\n" "" | sed "s: :${_info}:g"
     elif [ ${_level} = "BANNER" ];then                                   
-        echo -n
-        for ((NUM=70; NUM>0; NUM-- ));do                                 
-            echo -e -n  "*"                                              
-        done
-        echo -e "\n  ${_info}"
-        for ((NUM=70; NUM>0; NUM-- ));do                                 
-            echo -e -n "*"                                               
-        done
-        echo -e ""                                                       
+        printf "\n%70s\n" "" | sed "s: :*:g"
+        echo -e -n "  ${_info}"
+        printf "\n%70s\n" "" | sed "s: :*:g"
     elif [ ${_level} = "BREAKLINE" ];then
         infolen=${#_info}
         prefixlen=4
-        echo -e 
-        for ((NUM=4; NUM>0; NUM-- ));do
-            echo -e -n "="                                               
-        done
-        echo -e -n " ${_info} "
-        for ((NUM=70 - ${infolen} - 2 - ${prefixlen}; NUM>0; NUM-- ));do
-            echo -e -n "="                                               
-        done
-        echo -e "\n\n"
+        ((subfixlen=70 - ${#_info} - ${prefixlen}))
+        printf "\n%${prefixlen}s" "" | sed -e "s: :*:g" -e "s:_: :g"
+        printf "%s" " ${_info} " 
+        printf "%${subfixlen}s\n\n" "" | sed -e "s: :*:g" -e "s:_: :g"
     fi                                                                   
 }

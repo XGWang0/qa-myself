@@ -102,7 +102,6 @@ v_updir=`find /var/log/qa/ctcs2 -type d -name "qa_virtualization-perf-update_rpm
 #   Generate hypervisor relevant logs
 #-------------------------------------------------------------------------------
 tarlogpath=${v_updir}/gather_log.debug
-echo "aaaaaaaaaaaaaaa" >> $tarlogpath 2>&1
 tar cvf $v_updir/libvirt.tar /var/log/libvirt >> $tarlogpath 2>&1
 if uname -r | grep -iq xen  || [ -e /proc/xen/privcmd ];then
 	xl dmesg > $v_updir/xl-dmesg.log

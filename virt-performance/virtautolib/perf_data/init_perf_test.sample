@@ -1,0 +1,105 @@
+#!/bin/bash
+#===============================================================================
+#
+#          FILE:  generate_case_list.sh
+# 
+#         USAGE:  ./generate_case_list.sh 
+# 
+#   DESCRIPTION:  
+# 
+#       OPTIONS:  ---
+#  REQUIREMENTS:  ---
+#          BUGS:  ---
+#         NOTES:  ---
+#        AUTHOR:   (), 
+#       COMPANY:  
+#       VERSION:  1.0
+#       CREATED:  02/15/2017 01:32:54 AM EST
+#      REVISION:  ---
+#===============================================================================
+
+EXTRA_COMPARED_OBJ=(
+'x86_64/SLES-12-SP1/GM/'
+'x86_64/SLES-12-SP2/GM/4.4.21-69-default'
+)
+
+function create_distro_pair ()
+{
+     # $1 is Q, current perf test is comparsion object or question object ; $1 is R, current perf test is compared object or reference object
+     local comparsion_type=$1
+     local project=$2
+     local build=$3
+     local kernel=$4
+     local tp_num=$5
+     #kernel=4.4.21-68-default
+     #build=GMC
+     #project=SLES-12-SP2
+     curr_tr=`/usr/share/qa/perfcom/perfcmd.py run list | grep -i -E "${project}/${build}/${kernel}[ ]*${tp_num}" | cut -d: -f1`
+     [ -z "${curr_tr}" ] && echo "[ERROR]: Failed to extract curren comparison id" && exit 1 
+     if [ $comparsion_type = "Q" ];then
+         for e_t_r in ${EXTRA_COMPARED_OBJ[*]}
+         do
+             extra_obj_ids=`/usr/share/qa/perfcom/perfcmd.py run list | grep -i -E "${e_t_r}" | cut -d: -f1`
+             for obj_id in $extra_obj_ids
+             do
+                 if [[ -n "$obj_id" && ( ${obj_id} -ne $curr_tr ) ]];then
+                     echo "[INFO ]: New comparison pair with ${curr_tr} and ${obj_id}"
+                     /usr/share/qa/perfcom/perfcmd.py run pair-new ${curr_tr} ${obj_id}
+                 fi
+             done
+         done
+
+         full_compared_obj=`/usr/share/qa/perfcom/perfcmd.py run list | grep -i -E "${project}/${build}/.*${tp_num}" | cut -d: -f1`
+         for t_r in ${full_compared_obj}
+         do
+             if [ ${curr_tr} -ne ${t_r} ];then
+                 echo "[INFO ]: New comparison pair with ${curr_tr} and ${t_r}"
+                 /usr/share/qa/perfcom/perfcmd.py run pair-new ${curr_tr} ${t_r}
+                 if [ $? -ne 0 ];then
+                     echo "[WARN ]: Failed to create new comparison pair with ${curr_tr} and ${t_r}" && exit 1
+                 fi
+             fi
+         done
+     fi
+
+}    # ----------  end of function create_distro_pair  ----------
+
+
+function verify_build ()
+{
+    local build=$1
+    local CONST_BUILD_SCOPE="GA GM GMC BETA ALPHA RC"
+    for b in $CONST_BUILD_SCOPE
+    do
+        if [[ "${build}" =~ "${b}"[0-9]* ]];then
+            return 0
+        fi
+    done
+    return 1
+}    # ----------  end of function verify_build  ----------
+
+#===  FUNCTION  ================================================================
+#          NAME:  
+#   DESCRIPTION:  
+#    PARAMETERS:  
+#       RETURNS:  
+#===============================================================================
+function create_tp ()
+{
+    local tp_num=$1
+    local product=`echo $2 | tr [a-z] [A-Z]`
+    output=`/usr/share/qa/tools/product.pl`
+    if echo $output | grep -i $product;then
+        build=`echo $output | sed "s/${product}-//"`
+    fi
+    [ -n "$build" ] && verify_build ${build} || (echo "[ERROR]: Failed to get build info for creating test plan for performance test" && exit 1)
+    echo "[INFO ]: Generate question distro object with : /usr/share/qa/perfcom/perfcmd.py run new  -a x86_64 -b ${build} -r ${product} -k "`uname -r`" -n $tp_num "
+    /usr/share/qa/perfcom/perfcmd.py run new -a x86_64 -b ${build} -r ${product} -k "`uname -r`" -n $tp_num 
+    if [ $? -ne 0 ];then
+        echo "[ERROR]: Failed to create test plan for perf test" && exit 1
+    fi
+    create_distro_pair Q  ${product} ${build} `uname -r` $tp_num
+}    # ----------  end of function qaset_run  ----------
+
+#create_tp  60008 sles-12-sp1
+create_tp  TESTPLAN BASEPROJECT

@@ -1,0 +1,50 @@
+#!/bin/bash
+#===============================================================================
+#
+#          FILE:  generate_case_list.sh
+# 
+#         USAGE:  ./generate_case_list.sh 
+# 
+#   DESCRIPTION:  
+# 
+#       OPTIONS:  ---
+#  REQUIREMENTS:  ---
+#          BUGS:  ---
+#         NOTES:  ---
+#        AUTHOR:   (), 
+#       COMPANY:  
+#       VERSION:  1.0
+#       CREATED:  02/15/2017 01:32:54 AM EST
+#      REVISION:  ---
+#===============================================================================
+
+#===  FUNCTION  ================================================================
+#          NAME:  
+#   DESCRIPTION:  
+#    PARAMETERS:  
+#       RETURNS:  
+#===============================================================================
+function qaset_run ()
+{
+    testcase=$1
+    times=$2
+    casefolder=~/qaset
+    mkdir ${casefolder}
+    [ -z "$testcase" ] && testcase=libmicro_bench
+    [ -z "$times" ] && times=3
+
+    caseprefix="#!/bin/bash\nSQ_TEST_RUN_LIST=(\n"
+    casesubfix="\n)\n"
+    caselist=
+    for case in ${testcase//,/ }
+    do
+        for((i=0;i<$times;i++))
+        do
+            caselist="$caselist    $case\n"
+        done
+    done
+    echo -e "${caseprefix}${caselist}${casesubfix}" > ${casefolder}/list
+
+}    # ----------  end of function qaset_run  ----------
+
+qaset_run TESTCASE TIMES

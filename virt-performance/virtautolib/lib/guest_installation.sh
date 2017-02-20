@@ -24,6 +24,7 @@
 #
 
 source ./vh-update-lib.sh
+source ./vm-perf-lib.sh
 #-------------------------------------------------------------------------------
 #   Guest installation start
 #-------------------------------------------------------------------------------
@@ -44,44 +45,6 @@ function usage() {
 	EXIT 1
 }
 
-function verify_guest_upgrade_via_susereleasefile() {
-	vm=$1
-	product_upgrade=$2
-
-	commands='
-        realProduct=`sed -n "1p" /etc/SuSE-release`
-        if [[ "$realProduct" = "SUSE Linux Enterprise Server"* ]];then
-                realProductName="sles"
-        fi
-        if [[ "$realProduct" = *"x86_64"* ]];then
-                realArch="64"
-        else
-                realArch="32"
-        fi
-        realVersion=`grep "VERSION" /etc/SuSE-release | sed "s/^.*VERSION = \(.*\)\s*$/\1/"`
-        realSp=`grep "PATCHLEVEL" /etc/SuSE-release | sed "s/^.*PATCHLEVEL = \(.*\)\s*$/\1/"`
-        realProductFullName="${realProductName}-${realVersion}-sp${realSp}-${realArch}"
-        if [ "$realProductFullName" == "$upgrade_product" ];then
-            exit 0
-        else
-            exit 1
-        fi
-	'
-	tmpScript="/tmp/verify_guest_upgrade_via_susereleasefile-$$.sh"
-	commands=${commands/\$upgrade_product/$product_upgrade};
-	echo "$commands" > $tmpScript
-	run_script_inside_vm $vm "$tmpScript" no no
-	ret=$?
-	rm $tmpScript
-	if [ $ret -eq 0 ];then
-		echo "The SuSe-release file in guest $vm is correct after guest upgrade."
-	else
-		echo "The SuSe-release file in guest $vm is wrong after guest upgrade."
-	fi
-	return $ret
-}
-
-
 #===  FUNCTION  ================================================================
 #          NAME:  verify_guest_up_via_ssh
 #   DESCRIPTION:  Through ssh to connect vm which is used to verify if vm is up
@@ -92,7 +55,7 @@ function verify_guest_upgrade_via_susereleasefile() {
 #       RETURNS:  0: pass; 1:fail
 #===============================================================================
 
-    function verify_guest_up_via_ssh() {
+function verify_guest_up_via_ssh() {
     vm=$1
     timeout=$2
     interval=$3
@@ -161,185 +124,6 @@ function verify_guest_upgrade_via_susereleasefile() {
 
 }
 
-function test_single_guest_upgrade() {
-	vm=$1
-	product_upgrade=$2
-	product_upgrade_repo=$3
-	logFile=$4
-
-	adminCommand="/usr/share/qa/virtautolib/lib/vm-administration.sh -m $vm"
-	#admin before guest upgrade
-	$adminCommand
-	if [ $? -ne 0 ];then
-		echo "  $vm  ---  Fail  ---  Administration before guest upgrade fail." >> $logFile
-		return 1
-	fi
-
-	#update guest higher than sle10
-	guestRelease=`echo $vm | cut -d'-' -f 2`
-	if [ $guestRelease -gt 10 ];then
-		#update guest to product's update repo to avoid any blocking issue for guest upgrade
-		updateGuestScript=/tmp/update-guest-$$.sh
-		local getSource="/usr/share/qa/virtautolib/lib/get-source.sh"
-		guestUpdateRepo=`$getSource source.virtupdate.${vm%-[fp]v*}`
-		cat > $updateGuestScript <<eof
-			if ! (zypper lr -u | grep -q guestUpdateRepo);then
-				zypper --non-interactive --gpg-auto-import-keys ar $guestUpdateRepo guestUpdateRepo
-			fi
-			zypper --non-interactive --gpg-auto-import-keys ref guestUpdateRepo
-			zypper --non-interactive --gpg-auto-import-keys up
-eof
-		echo "Debug: the updateGuestScript content is:"
-		cat $updateGuestScript
-		run_script_inside_vm $vm "$updateGuestScript" no no
-		if [ $? -ne 0 ];then
-			echo "  $vm  ---  Fail  ---  Guest update to product's update repo without reboot fail." >> $logFile
-			return 1
-		fi
-		
-		#special workaround for sle11sp3/sp4 to upgrade to sle12sp2 due to libpango bug
-		if [ $guestRelease -eq 11 ];then
-			specialWorkaroundScript=/tmp/special-workaround-$$.sh
-			local getSource="/usr/share/qa/virtautolib/lib/get-source.sh"
-			specialWorkaroundRepo=`$getSource source.virtupdate.sles-11-sp1-64`
-			cat > $specialWorkaroundScript <<eof
-				if ! (zypper lr -u | grep -q specialWorkaroundRepo);then
-					zypper --non-interactive --gpg-auto-import-keys ar $specialWorkaroundRepo specialWorkaroundRepo
-				fi
-				zypper --non-interactive --gpg-auto-import-keys ref specialWorkaroundRepo
-				zypper --non-interactive --gpg-auto-import-keys up pango*
-eof
-			echo "Debug: the specialWorkaroundScript  content is:"
-			cat $specialWorkaroundScript
-			run_script_inside_vm $vm "$specialWorkaroundScript" no no
-			if [ $? -ne 0 ];then
-				echo "  $vm  ---  Fail  ---  Guest special workaround update without reboot fail." >> $logFile
-				return 1
-			fi
-		fi
-			
-		#reboot
-		tmpRebootScript="/tmp/reboot-$$.sh"
-		echo "reboot">$tmpRebootScript
-		run_script_inside_vm $vm "$tmpRebootScript" no no
-		echo "Reboot command is sent to guest $vm."
-		rm $tmpRebootScript
-		sleep 30
-
-		#verify guest is up after update guest
-		timeout=300
-		verify_guest_up_via_ssh $vm $timeout
-		if [ $? -ne 0 ];then
-			echo "  $vm  ---  Fail  ---  Reboot after guest update to update repo and special workarounds fail." >> $logFile
-			return 1
-		fi
-		
-	fi
-
-	#kill all zypper process before guest upgrade
-	killZypperProcScript=/tmp/kill_zypper_procs-$$.sh
-	cat > $killZypperProcScript <<eof
-	zypperProcs=\`ps -ef | grep [z]ypper | gawk "{print \\\\\\\$2;}"\`
-	[ -z "\$zypperProcs" ] && exit 0
-	for proc in \$zypperProcs;do
-		kill -9 \$proc
-	done
-eof
-	echo "Debug: killZypperProcScript content is:"
-	cat $killZypperProcScript
-	run_script_inside_vm $vm "$killZypperProcScript" no no
-	if [ $? -ne 0 ];then
-		echo "  $vm  ---  Fail  ---  Kill zypper processes before guest upgrade fail.." >> $logFile
-		return 1
-	fi
-
-	#do guest upgrade
-	/usr/share/qa/virtautolib/lib/guest_upgrade.sh $product_upgrade $product_upgrade_repo $vm
-	if [ $? -ne 0 ];then
-		echo "  $vm  ---  Fail  ---  Guest upgrade without reboot fail." >> $logFile
-		return 1
-	fi
-
-	#reboot guest
-	tmpRebootScript="/tmp/reboot-$$.sh"
-	echo "reboot">$tmpRebootScript
-	run_script_inside_vm $vm "$tmpRebootScript" no no
-	echo "Reboot command is sent to guest $vm."
-	rm $tmpRebootScript
-	sleep 10
-
-	#wait extra time in case save_screenshot affect the grub2 boot select timer
-	sleep 60
-
-	#verify machine is up
-	vmRelease=`echo $vm | cut -d'-' -f 2`
-	upgradeRelease=`echo $product_upgrade | cut -d'-' -f 2`
-	if [ $vmRelease -lt $upgradeRelease ];then
-		timeout=3600
-	elif [ $vmRelease -eq $upgradeRelease ];then
-		timeout=600
-	else
-		timeout=0
-	fi
-	echo "Timeout for waiting the machine to be up is ${timeout}s."
-	verify_guest_up_via_ssh $vm $timeout 60 yes
-    if [ $? -ne 0 ];then
-        echo "  $vm  ---  Fail  ---  Reboot after guest upgrade fail." >> $logFile
-		return 1
-    fi
-
-	#verify guest upgrade via SuSe-release file
-	verify_guest_upgrade_via_susereleasefile $vm $product_upgrade
-    if [ $? -ne 0 ];then
-        echo "  $vm  ---  Fail  ---  Incorrect SuSe-release after guest upgrade." >> $logFile
-		return 1
-    fi
-
-	#shutdown vm
-	virsh destroy $vm
-
-	#admin after guest upgrade
-	$adminCommand
-    if [ $? -ne 0 ];then
-        echo "  $vm  ---  Fail  ---  Administration after guest upgrade fail." >> $logFile
-		return 1
-    fi
-	echo "  $vm  ---  Pass" >> $logFile
-}   
-
-function do_full_guest_upgrade_test() {
-	product_upgrade=$1
-	product_upgrade_repo=$2
-	vmList=`virsh list --all --name | sed '/Domain-0/d'`
-	retCode=0
-	logFile=/tmp/full_guest_upgrade_test-$$.log
-
-	if [ -f $logFile ];then
-		rm $logFile
-	fi
-
-	#result column meaning
-	echo "         Guest Name          --- Result ---  Reason  " > $logFile
-	#loop guest list to do guest upgrade test
-	for vm in $vmList;do
-		test_single_guest_upgrade $vm $product_upgrade $product_upgrade_repo $logFile
-		ret=$?
-		((retCode+=$ret))
-		#to lease resources of the guest if it fails
-		if [ $ret -ne 0 ];then
-			virsh destroy $vm
-			virsh undefine $vm
-		fi
-	done
-
-	#print result
-	echo -e "\n\nOverall guest upgrade result is:"
-	cat $logFile
-	echo "Test done"
-
-	return $retCode
-}
-
 function change_sles10sp4_guest_network_to_virtio_on_kvm_host() {
 	if ! uname -r|grep -iq xen && [ ! -e /proc/xen/privcmd ];then
 		if virsh list --all | grep -iq sles-10-sp4-64-fv-def-net;then
@@ -386,7 +170,7 @@ printInfo "Initialize project workspace:
 #-------------------------------------------------------------------------------
 printInfo "Start to install guest" BREAKLINE
 
-#install_vm_guests $GUEST_CONFIG "$GUEST_LIST"
+install_vm_guests $GUEST_CONFIG "$GUEST_LIST"
 
 ret=$?
 if [ $ret -ne 0 ];then
@@ -399,9 +183,11 @@ fi
 #   Backup vm config, disk file
 #-------------------------------------------------------------------------------
 printInfo "Backup VM config and disk files" INFO
-backup_vm_guest_data $backupRootDir $backupVmListFile $backupCfgXmlDir $backupDiskDir
+#backup_vm_guest_data $backupRootDir $backupVmListFile $backupCfgXmlDir $backupDiskDir
 if [ $? -ne 0 ];then
     EXIT 2
 fi
+
+gather_logs "VmInstall-" "$backupCfgXmlDir" "" "Test result for virtualization guest installation test"
 
 EXIT $exitCode
